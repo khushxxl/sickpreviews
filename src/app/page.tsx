@@ -58,6 +58,7 @@ const HANDLE_RADIUS = 10;
 export default function SickPreviews() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [bgImage, setBgImage] = useState<HTMLImageElement | null>(null);
   const [screenImage, setScreenImage] = useState<HTMLImageElement | null>(null);
@@ -383,6 +384,23 @@ export default function SickPreviews() {
     [canvasScale, canvasOffset, cropRegion, aspectRatio],
   );
 
+  const isInsideQuad = useCallback(
+    (px: number, py: number) => {
+      let sign = 0;
+      for (let i = 0; i < 4; i++) {
+        const a = corners[i],
+          b = corners[(i + 1) % 4];
+        const cross = (b.x - a.x) * (py - a.y) - (b.y - a.y) * (px - a.x);
+        if (cross !== 0) {
+          if (sign === 0) sign = cross > 0 ? 1 : -1;
+          else if ((cross > 0 ? 1 : -1) !== sign) return false;
+        }
+      }
+      return true;
+    },
+    [corners],
+  );
+
   const handleMouseDown = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const pos = getImageCoords(e);
@@ -395,8 +413,12 @@ export default function SickPreviews() {
           return;
         }
       }
+      // Click inside phone screen area → upload screenshot
+      if (isInsideQuad(pos.x, pos.y)) {
+        fileInputRef.current?.click();
+      }
     },
-    [corners, canvasScale, getImageCoords],
+    [corners, canvasScale, getImageCoords, isInsideQuad],
   );
 
   const handleMouseMove = useCallback(
@@ -554,10 +576,13 @@ export default function SickPreviews() {
   ]);
 
   return (
-    <div className="h-screen flex bg-[#0a0a0a] text-gray-300 overflow-hidden relative">
+    <div className="h-screen flex flex-col md:flex-row bg-[#0a0a0a] text-gray-300 overflow-hidden relative">
       {/* Canvas */}
       <div className="absolute inset-0 gradient-mesh">
-        <div ref={containerRef} className="absolute top-0 bottom-0 left-[17rem] right-[14.5rem]">
+        <div
+          ref={containerRef}
+          className="absolute top-0 bottom-0 left-0 right-0 md:left-[17rem] md:right-[14.5rem]"
+        >
           <canvas
             ref={canvasRef}
             className="absolute inset-0 cursor-crosshair"
@@ -565,6 +590,13 @@ export default function SickPreviews() {
             onMouseMove={handleMouseMove}
             onMouseUp={handleMouseUp}
             onMouseLeave={handleMouseUp}
+          />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            onChange={handleScreenUpload}
+            className="hidden"
           />
           {draggingIdx !== null && (
             <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-md px-3 py-1.5 rounded-full text-[11px] font-mono text-white/70 pointer-events-none border border-white/10">
@@ -576,7 +608,7 @@ export default function SickPreviews() {
       </div>
 
       {/* Left Panel — glassmorphism */}
-      <div className="absolute top-4 left-4 bottom-4 w-60 flex flex-col gap-4 p-4 rounded-2xl bg-white/[0.04] backdrop-blur-2xl border border-white/[0.08] shadow-2xl shadow-black/40 overflow-y-auto z-10">
+      <div className="hidden md:flex absolute top-4 left-4 bottom-4 w-60 flex-col gap-4 p-4 rounded-2xl bg-white/[0.04] backdrop-blur-2xl border border-white/[0.08] shadow-2xl shadow-black/40 overflow-y-auto z-10">
         <h1 className="text-md cursor-pointer font-semibold text-white/90 tracking-tight">
           sickpreviews.com
         </h1>
@@ -585,21 +617,27 @@ export default function SickPreviews() {
 
         {/* Aspect Ratio */}
         <div>
-          <p className="text-[10px] uppercase tracking-widest text-white/25 mb-2">Aspect Ratio</p>
+          <p className="text-[10px] uppercase tracking-widest text-white/25 mb-2">
+            Aspect Ratio
+          </p>
           <div className="grid grid-cols-4 gap-1.5">
             {ASPECT_RATIOS.map((ar) => (
               <button
                 key={ar.name}
                 onClick={() => setAspectRatio(ar.value)}
                 className={`flex flex-col items-center gap-1 py-1.5 rounded-lg transition-all ${
-                  aspectRatio === ar.value ? "bg-white/15" : "bg-white/[0.03] hover:bg-white/[0.08]"
+                  aspectRatio === ar.value
+                    ? "bg-white/15"
+                    : "bg-white/[0.03] hover:bg-white/[0.08]"
                 }`}
               >
                 <div className="flex items-center justify-center w-full h-8">
                   {ar.value ? (
                     <div
                       className={`rounded-[3px] border transition-all ${
-                        aspectRatio === ar.value ? "border-white/40 bg-white/10" : "border-white/15 bg-white/[0.04]"
+                        aspectRatio === ar.value
+                          ? "border-white/40 bg-white/10"
+                          : "border-white/15 bg-white/[0.04]"
                       }`}
                       style={{
                         width: ar.value >= 1 ? 28 : Math.round(28 * ar.value),
@@ -607,14 +645,22 @@ export default function SickPreviews() {
                       }}
                     />
                   ) : (
-                    <div className={`w-5 h-6 rounded-[3px] border border-dashed transition-all ${
-                      aspectRatio === ar.value ? "border-white/40" : "border-white/15"
-                    }`} />
+                    <div
+                      className={`w-5 h-6 rounded-[3px] border border-dashed transition-all ${
+                        aspectRatio === ar.value
+                          ? "border-white/40"
+                          : "border-white/15"
+                      }`}
+                    />
                   )}
                 </div>
-                <span className={`text-[9px] transition-all ${
-                  aspectRatio === ar.value ? "text-white/60" : "text-white/25"
-                }`}>{ar.name}</span>
+                <span
+                  className={`text-[9px] transition-all ${
+                    aspectRatio === ar.value ? "text-white/60" : "text-white/25"
+                  }`}
+                >
+                  {ar.name}
+                </span>
               </button>
             ))}
           </div>
@@ -792,7 +838,7 @@ export default function SickPreviews() {
       </div>
 
       {/* Right Panel — glassmorphism */}
-      <div className="absolute top-4 right-4 bottom-4 w-52 flex flex-col gap-4 p-4 rounded-2xl bg-white/[0.04] backdrop-blur-2xl border border-white/[0.08] shadow-2xl shadow-black/40 overflow-y-auto z-10">
+      <div className="hidden md:flex absolute top-4 right-4 bottom-4 w-52 flex-col gap-4 p-4 rounded-2xl bg-white/[0.04] backdrop-blur-2xl border border-white/[0.08] shadow-2xl shadow-black/40 overflow-y-auto z-10">
         <a
           href="https://buymeacoffee.com/khushbuildsnow"
           target="_blank"
@@ -854,6 +900,74 @@ export default function SickPreviews() {
             className="hidden"
           />
         </label>
+      </div>
+
+      {/* Mobile bottom bar */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-20 bg-black/80 backdrop-blur-xl border-t border-white/[0.08] p-3 flex flex-col gap-3 safe-bottom">
+        <div className="flex gap-2">
+          <label className="flex-1 flex items-center justify-center gap-2 cursor-pointer py-3 rounded-xl bg-white/[0.06] border border-white/[0.08] text-white/50 text-xs">
+            {screenImage ? (
+              <span className="truncate px-2">{screenFileName}</span>
+            ) : (
+              <span>Upload screenshot</span>
+            )}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={handleScreenUpload}
+              className="hidden"
+            />
+          </label>
+          <button
+            onClick={handleExport}
+            disabled={!bgImage}
+            className="px-5 py-3 rounded-xl bg-white/[0.1] text-white/70 text-xs font-medium disabled:opacity-30"
+          >
+            Export
+          </button>
+        </div>
+        <div className="flex gap-1.5 overflow-x-auto pb-1">
+          {BUILT_IN_BACKGROUNDS.map((bg, idx) => (
+            <button
+              key={idx}
+              onClick={() => selectBuiltInBg(idx)}
+              className={`w-10 h-14 flex-shrink-0 rounded-lg overflow-hidden border-2 ${
+                activeBgIdx === idx ? "border-white/30" : "border-white/[0.06]"
+              }`}
+            >
+              <img
+                src={bg.thumb}
+                alt={bg.name}
+                className="w-full h-full object-cover"
+              />
+            </button>
+          ))}
+          {BG_COLORS.map((c) => (
+            <button
+              key={c.name}
+              onClick={() => setBgColor(c.value)}
+              className={`w-10 h-14 flex-shrink-0 rounded-lg border-2 ${
+                bgColor === c.value ? "border-white/30" : "border-white/[0.06]"
+              }`}
+            >
+              {c.value ? (
+                <div
+                  className="w-full h-full rounded-[5px]"
+                  style={{ backgroundColor: c.value }}
+                />
+              ) : (
+                <div
+                  className="w-full h-full rounded-[5px]"
+                  style={{
+                    backgroundImage:
+                      "repeating-conic-gradient(#444 0% 25%, #666 0% 50%)",
+                    backgroundSize: "6px 6px",
+                  }}
+                />
+              )}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
