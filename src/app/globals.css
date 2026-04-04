@@ -3,15 +3,8 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --background: #0a0a0a;
+  --foreground: #ededed;
 }
 
 body {
@@ -20,8 +13,34 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
+.gradient-mesh {
+  background:
+    radial-gradient(
+      ellipse 120% 80% at 15% -20%,
+      oklch(0.55 0.25 290 / 0.14) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 90% 70% at 85% 110%,
+      oklch(0.55 0.2 230 / 0.12) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 60% 50% at 50% 50%,
+      oklch(0.5 0.18 270 / 0.05) 0%,
+      transparent 70%
+    ),
+    repeating-linear-gradient(
+      0deg,
+      oklch(1 0 0 / 0.02) 0px,
+      transparent 1px,
+      transparent 64px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      oklch(1 0 0 / 0.02) 0px,
+      transparent 1px,
+      transparent 64px
+    ),
+    var(--background);
 }
