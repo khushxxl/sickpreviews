@@ -856,6 +856,16 @@ export default function SickPreviews() {
           Buy me a coffee
         </a>
 
+        <a
+          href="https://buildnowstudios.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center justify-center gap-1 py-2 rounded-xl bg-white text-black text-[11px] font-bold transition-all hover:scale-[1.02]"
+        >
+          <img src="/logo.png" alt="" className="h-5 w-5 rounded-md" />
+          We build sick mobile apps
+        </a>
+
         <div className="h-px bg-white/[0.06]" />
 
         <p className="text-[10px] uppercase tracking-widest text-white/25">

@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import { Analytics } from "@vercel/analytics/react";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "sickpreviews.com",
-  description: "Create sick phone mockup previews — composite app screenshots onto device mockups and export as PNG",
+  description:
+    "Create sick phone mockup previews — composite app screenshots onto device mockups and export as PNG",
   viewport: "width=device-width, initial-scale=1, viewport-fit=cover",
   openGraph: {
     title: "sickpreviews.com",
@@ -26,7 +28,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        {children}
+        <Analytics />
+      </body>
     </html>
   );
 }
