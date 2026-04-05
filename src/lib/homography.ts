@@ -117,26 +117,28 @@ export function warpImage(
 
       const dstIdx = (dy * bgW + dx) * 4;
 
-      for (let c = 0; c < 4; c++) {
+      // Interpolate alpha first
+      const srcAlphaRaw =
+        srcData[i00 + 3] * (1 - ax) * (1 - ay) +
+        srcData[i10 + 3] * ax * (1 - ay) +
+        srcData[i01 + 3] * (1 - ax) * ay +
+        srcData[i11 + 3] * ax * ay;
+      const srcAlpha = (srcAlphaRaw / 255) * opacity;
+      if (srcAlpha <= 0) continue;
+
+      for (let c = 0; c < 3; c++) {
         const val =
           srcData[i00 + c] * (1 - ax) * (1 - ay) +
           srcData[i10 + c] * ax * (1 - ay) +
           srcData[i01 + c] * (1 - ax) * ay +
           srcData[i11 + c] * ax * ay;
-
-        if (c < 3) {
-          // RGB: alpha-blend with background
-          const srcAlpha = (opacity * val) / 255;
-          bgData[dstIdx + c] =
-            val * srcAlpha + bgData[dstIdx + c] * (1 - srcAlpha);
-        } else {
-          // Alpha channel
-          bgData[dstIdx + c] = Math.min(
-            255,
-            val * opacity + bgData[dstIdx + c] * (1 - opacity)
-          );
-        }
+        bgData[dstIdx + c] =
+          val * srcAlpha + bgData[dstIdx + c] * (1 - srcAlpha);
       }
+      bgData[dstIdx + 3] = Math.min(
+        255,
+        srcAlphaRaw * opacity + bgData[dstIdx + 3] * (1 - srcAlpha)
+      );
     }
   }
 }
