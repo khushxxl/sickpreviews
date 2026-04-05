@@ -73,6 +73,7 @@ export default function SickPreviews() {
   const [screenFileName, setScreenFileName] = useState("");
   const [activeBgIdx, setActiveBgIdx] = useState(0);
   const [screenRadius, setScreenRadius] = useState(true);
+  const [showToast, setShowToast] = useState(false);
   const [bgColor, setBgColor] = useState<string | null>("#e8e8e8");
   const [aspectRatio, setAspectRatio] = useState<number | null>(null);
   const [deviceZoom, setDeviceZoom] = useState(0);
@@ -455,6 +456,7 @@ export default function SickPreviews() {
     if (!file) return;
     setScreenFileName(file.name);
     setScreenImage(await loadImage(file));
+    setShowToast(true);
   };
 
   const handleBgUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -969,6 +971,36 @@ export default function SickPreviews() {
           ))}
         </div>
       </div>
+
+      {/* Quality toast */}
+      {showToast && (
+        <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-30 animate-slide-up">
+          <div className="flex items-center gap-4 px-5 py-3 rounded-full bg-white/[0.08] backdrop-blur-2xl border border-white/[0.1] shadow-2xl shadow-black/50">
+            <span className="text-xs text-white/50">
+              The preview is low quality to save on resources, export to see
+              full quality
+            </span>
+            <button
+              onClick={() => setShowToast(false)}
+              className="text-white/30 hover:text-white/60 transition-colors flex-shrink-0"
+            >
+              <svg
+                className="w-4 h-4"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M6 18L18 6M6 6l12 12"
+                />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
