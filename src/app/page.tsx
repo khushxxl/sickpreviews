@@ -55,6 +55,63 @@ const ASPECT_RATIOS = [
 
 const HANDLE_RADIUS = 10;
 
+/** Draw a Dynamic Island pill at the top-center of the warped screen quad */
+function drawNotch(
+  ctx: CanvasRenderingContext2D,
+  corners: [Point, Point, Point, Point],
+) {
+  const [tl, tr] = corners;
+  const bl = corners[3];
+  const topMidX = (tl.x + tr.x) / 2;
+  const topMidY = (tl.y + tr.y) / 2;
+  const screenW = Math.hypot(tr.x - tl.x, tr.y - tl.y);
+  const screenH = Math.hypot(bl.x - tl.x, bl.y - tl.y);
+  const rightX = (tr.x - tl.x) / screenW;
+  const rightY = (tr.y - tl.y) / screenW;
+  const downX = (bl.x - tl.x) / screenH;
+  const downY = (bl.y - tl.y) / screenH;
+  // Real Dynamic Island proportions: ~126x37pt on 393pt wide screen
+  const pillW = screenW * 0.32;
+  const pillH = screenH * 0.032;
+  const offsetDown = screenH * 0.02;
+  const cx = topMidX + downX * (offsetDown + pillH / 2);
+  const cy = topMidY + downY * (offsetDown + pillH / 2);
+  const hw = pillW / 2;
+  const hh = pillH / 2;
+  const r = hh;
+  const angle = Math.atan2(rightY, rightX);
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+
+  // Subtle shadow for depth
+  ctx.shadowColor = "rgba(0, 0, 0, 0.4)";
+  ctx.shadowBlur = hh * 0.8;
+  ctx.shadowOffsetX = 0;
+  ctx.shadowOffsetY = hh * 0.15;
+
+  // Main pill — deep black
+  ctx.fillStyle = "#000";
+  ctx.beginPath();
+  ctx.roundRect(-hw, -hh, pillW, pillH, r);
+  ctx.fill();
+
+  // Reset shadow before highlight
+  ctx.shadowColor = "transparent";
+
+  // Subtle glossy highlight on top edge
+  const grad = ctx.createLinearGradient(0, -hh, 0, hh * 0.2);
+  grad.addColorStop(0, "rgba(255, 255, 255, 0.08)");
+  grad.addColorStop(1, "rgba(255, 255, 255, 0)");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.roundRect(-hw, -hh, pillW, pillH, r);
+  ctx.fill();
+
+  ctx.restore();
+}
+
 export default function SickPreviews() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -73,6 +130,7 @@ export default function SickPreviews() {
   const [screenFileName, setScreenFileName] = useState("");
   const [activeBgIdx, setActiveBgIdx] = useState(0);
   const [screenRadius, setScreenRadius] = useState(true);
+  const [showNotch, setShowNotch] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [bgColor, setBgColor] = useState<string | null>("#e8e8e8");
   const [aspectRatio, setAspectRatio] = useState<number | null>(null);
@@ -312,6 +370,15 @@ export default function SickPreviews() {
 
     ctx.restore();
 
+    // Draw Dynamic Island notch
+    if (showNotch && screenImage) {
+      const displayCorners = corners.map((p) => ({
+        x: imgOffX + (p.x - cropSx) * canvasScale,
+        y: imgOffY + (p.y - cropSy) * canvasScale,
+      })) as [Point, Point, Point, Point];
+      drawNotch(ctx, displayCorners);
+    }
+
     // Quad outline
     ctx.beginPath();
     corners.forEach((p, i) => {
@@ -350,6 +417,7 @@ export default function SickPreviews() {
     draggingIdx,
     cropRegion,
     screenRadius,
+    showNotch,
     bgColor,
     aspectRatio,
   ]);
@@ -562,6 +630,14 @@ export default function SickPreviews() {
         ctx.putImageData(bgData, 0, 0);
       }
     }
+    // Draw Dynamic Island notch on export
+    if (showNotch && screenImage) {
+      const exportCorners = corners.map((p) => ({
+        x: (p.x - csx) * exportScale + imgX,
+        y: (p.y - csy) * exportScale + imgY,
+      })) as [Point, Point, Point, Point];
+      drawNotch(ctx, exportCorners);
+    }
     const link = document.createElement("a");
     link.download = "sickpreviews-export.png";
     link.href = offscreen.toDataURL("image/png");
@@ -572,6 +648,7 @@ export default function SickPreviews() {
     corners,
     opacity,
     screenRadius,
+    showNotch,
     bgColor,
     cropRegion,
     aspectRatio,
@@ -790,6 +867,27 @@ export default function SickPreviews() {
             </div>
             <span className="text-[11px] text-white/40">Rounded corners</span>
           </button>
+          {/* <button
+            onClick={() => setShowNotch(!showNotch)}
+            className="flex items-center gap-3 cursor-pointer select-none w-full py-2 px-2.5 rounded-lg hover:bg-white/[0.04] transition-all"
+          >
+            <div
+              className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 ${showNotch ? "bg-white/25" : "bg-white/[0.06]"}`}
+            >
+              <div
+                className={`absolute top-0.5 w-4 h-4 rounded-full bg-white/90 shadow-sm transition-all ${showNotch ? "left-[18px]" : "left-0.5"}`}
+              />
+            </div>
+            <span className="text-[11px] text-white/40">Dynamic Island</span>
+          </button> */}
+        </div>
+
+        {/* Dynamic Island warning */}
+        <div className="flex items-start gap-2 px-2.5 py-2 rounded-lg bg-white">
+          <span className="text-black/60 text-sm flex-shrink-0">⚠</span>
+          <span className="text-[11px] text-black/70 leading-relaxed">
+            Your screenshot should include its own Dynamic Island
+          </span>
         </div>
 
         {/* Background Color */}
@@ -985,10 +1083,9 @@ export default function SickPreviews() {
       {/* Quality toast */}
       {showToast && (
         <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-30 animate-slide-up">
-          <div className="flex items-center gap-4 px-5 py-3 rounded-full bg-white/[0.08] backdrop-blur-2xl border border-white/[0.1] shadow-2xl shadow-black/50">
-            <span className="text-xs text-white/50">
-              The preview is low quality to save on resources, export to see
-              full quality
+          <div className="flex items-center gap-4 px-5 py-3 rounded-full bg-yellow-500/20 backdrop-blur-2xl border border-yellow-400/30 shadow-2xl shadow-black/50">
+            <span className="text-sm font-medium text-yellow-200">
+              Preview is low quality - Please export for full resolution
             </span>
             <button
               onClick={() => setShowToast(false)}
