@@ -26,17 +26,17 @@ const BUILT_IN_BACKGROUNDS = [
       { x: 137, y: 443 },
     ] as [Point, Point, Point, Point],
   },
-  // {
-  //   name: "Hand 3",
-  //   src: "/bg-3-transparent.png",
-  //   thumb: "/bg-3-transparent.png",
-  //   corners: [
-  //     { x: 310, y: 230 },
-  //     { x: 720, y: 170 },
-  //     { x: 780, y: 1100 },
-  //     { x: 250, y: 1000 },
-  //   ] as [Point, Point, Point, Point],
-  // },
+  {
+    name: "Hand 3",
+    src: "/bg-3-transparent.png",
+    thumb: "/bg-3-transparent.png",
+    corners: [
+      { x: 86, y: 57 },
+      { x: 338, y: 57 },
+      { x: 295, y: 483 },
+      { x: 135, y: 483 },
+    ] as [Point, Point, Point, Point],
+  },
 ];
 
 const BG_COLORS = [
@@ -885,7 +885,7 @@ export default function SickPreviews() {
               <img
                 src={bg.thumb}
                 alt={bg.name}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-cover bg-white"
               />
             </button>
           ))}
@@ -950,7 +950,7 @@ export default function SickPreviews() {
               <img
                 src={bg.thumb}
                 alt={bg.name}
-                className="w-full h-full object-cover"
+                className="w-full h-full object-cover bg-white"
               />
             </button>
           ))}
