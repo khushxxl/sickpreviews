@@ -130,6 +130,7 @@ export default function SickPreviews() {
   const [screenFileName, setScreenFileName] = useState("");
   const [activeBgIdx, setActiveBgIdx] = useState(0);
   const [screenRadius, setScreenRadius] = useState(true);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [showNotch, setShowNotch] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [bgColor, setBgColor] = useState<string | null>("#e8e8e8");
