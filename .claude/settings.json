@@ -1,7 +1,15 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(npm install:*)",
+      "Bash(curl -sL \"https://cdn.buymeacoffee.com/buttons/bmc-new-btn-logo.svg\" -o /Users/khushaalchoithramani/Desktop/work/handmockups/public/bmc-logo.svg)",
+      "Read(//Users/khushaalchoithramani/Desktop/work/axyle/client/public/raycast-bg/**)",
+      "Read(//Users/khushaalchoithramani/Downloads/**)"
+    ],
+    "additionalDirectories": [
+      "/Users/khushaalchoithramani/Downloads"
     ]
   }
 }

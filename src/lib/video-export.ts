@@ -1,5 +1,17 @@
 import { Point, computeInverseHomography, warpImage } from "./homography";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let ffmpegInstance: any = null;
+
+async function getFFmpeg() {
+  if (ffmpegInstance?.loaded) return ffmpegInstance;
+  const { FFmpeg } = await import("@ffmpeg/ffmpeg");
+  const ffmpeg = new FFmpeg();
+  await ffmpeg.load();
+  ffmpegInstance = ffmpeg;
+  return ffmpeg;
+}
+
 export interface VideoExportOptions {
   video: HTMLVideoElement;
   bgImage: HTMLImageElement;
@@ -15,10 +27,6 @@ export interface VideoExportOptions {
   signal?: AbortSignal;
 }
 
-/**
- * Export video using CPU warp (same as preview) + MediaRecorder.
- * Plays the video in real-time on a hidden canvas to get correct timing.
- */
 export async function exportVideo(
   options: VideoExportOptions,
 ): Promise<Blob> {
@@ -54,13 +62,11 @@ export async function exportVideo(
   const imgX = (iw - imgW) / 2;
   const imgY = (ih - imgH) / 2;
 
-  // Create output canvas
   const outputCanvas = document.createElement("canvas");
   outputCanvas.width = iw;
   outputCanvas.height = ih;
   const ctx = outputCanvas.getContext("2d")!;
 
-  // Pre-render the background at export resolution
   const bgCanvas = document.createElement("canvas");
   bgCanvas.width = imgW;
   bgCanvas.height = imgH;
@@ -72,7 +78,7 @@ export async function exportVideo(
   const srcH = video.videoHeight;
   const duration = video.duration;
 
-  // Set up MediaRecorder with real-time playback
+  // MediaRecorder for real-time capture
   const stream = outputCanvas.captureStream();
   const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
     ? "video/webm;codecs=vp9"
@@ -80,7 +86,7 @@ export async function exportVideo(
 
   const recorder = new MediaRecorder(stream, {
     mimeType,
-    videoBitsPerSecond: 8_000_000,
+    videoBitsPerSecond: 10_000_000,
   });
 
   const chunks: Blob[] = [];
@@ -88,13 +94,12 @@ export async function exportVideo(
     if (e.data.size > 0) chunks.push(e.data);
   };
 
-  const exportDone = new Promise<Blob>((resolve, reject) => {
+  const recordDone = new Promise<Blob>((resolve, reject) => {
     recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
     recorder.onerror = (e) => reject(e);
   });
 
-  // Prepare warp constants
-  const hiResScale = exportScale;
+  // Warp constants
   const srcCorners: [Point, Point, Point, Point] = [
     { x: 0, y: 0 },
     { x: srcW - 1, y: 0 },
@@ -102,21 +107,18 @@ export async function exportVideo(
     { x: 0, y: srcH - 1 },
   ];
   const exportCorners = corners.map((p) => ({
-    x: (p.x - csx) * hiResScale,
-    y: (p.y - csy) * hiResScale,
+    x: (p.x - csx) * exportScale,
+    y: (p.y - csy) * exportScale,
   })) as [Point, Point, Point, Point];
   const invH = computeInverseHomography(srcCorners, exportCorners);
   const radius = roundedCorners ? Math.min(srcW, srcH) * 0.12 : 0;
 
-  // Temp canvas for extracting video frames
   const srcCanvas = document.createElement("canvas");
   srcCanvas.width = srcW;
   srcCanvas.height = srcH;
   const srcCtx = srcCanvas.getContext("2d")!;
 
-  // Render function for each frame
   function renderCurrentFrame() {
-    // Draw video frame to source canvas
     srcCtx.clearRect(0, 0, srcW, srcH);
     if (radius > 0) {
       srcCtx.save();
@@ -128,17 +130,14 @@ export async function exportVideo(
     if (radius > 0) srcCtx.restore();
     const srcData = srcCtx.getImageData(0, 0, srcW, srcH);
 
-    // Clone bg data (warpImage modifies in place)
     const frameData = new ImageData(
       new Uint8ClampedArray(bgData.data),
       imgW,
       imgH,
     );
 
-    // CPU warp
     warpImage(frameData.data, srcData.data, invH, exportCorners, srcW, srcH, imgW, imgH, opacity);
 
-    // Composite onto output canvas
     if (bgColor) {
       ctx.fillStyle = bgColor;
       ctx.fillRect(0, 0, iw, ih);
@@ -146,12 +145,12 @@ export async function exportVideo(
       ctx.clearRect(0, 0, iw, ih);
     }
 
-    // Put warped frame onto a temp canvas, then draw to output
     bgCtx.putImageData(frameData, 0, 0);
     ctx.drawImage(bgCanvas, imgX, imgY, imgW, imgH);
   }
 
-  // Play video from start and record in real-time
+  // Phase 1: Record real-time as WebM (50% of progress)
+  onProgress(0);
   video.currentTime = 0;
   video.muted = true;
 
@@ -166,10 +165,7 @@ export async function exportVideo(
   recorder.start();
   video.play();
 
-  // RAF loop — render each frame in real-time
   await new Promise<void>((resolve) => {
-    let lastProgress = 0;
-
     function tick() {
       if (signal?.aborted) {
         video.pause();
@@ -179,41 +175,84 @@ export async function exportVideo(
       }
 
       if (video.ended || video.currentTime >= duration - 0.05) {
-        // Final frame
         renderCurrentFrame();
         video.pause();
         recorder.stop();
-        onProgress(100);
         resolve();
         return;
       }
 
       renderCurrentFrame();
 
-      // Update progress
-      const pct = Math.round((video.currentTime / duration) * 100);
-      if (pct !== lastProgress) {
-        lastProgress = pct;
-        onProgress(pct);
-      }
+      const pct = Math.round((video.currentTime / duration) * 50);
+      onProgress(pct);
 
       requestAnimationFrame(tick);
     }
-
     requestAnimationFrame(tick);
   });
 
-  // Skip download if cancelled
   if (signal?.aborted) return new Blob();
 
-  const blob = await exportDone;
+  const webmBlob = await recordDone;
 
-  const url = URL.createObjectURL(blob);
+  // Phase 2: Try converting WebM to MP4 with FFmpeg.wasm
+  onProgress(55);
+
+  let finalBlob: Blob = webmBlob;
+  let ext = "webm";
+
+  // Check if SharedArrayBuffer is available (required for FFmpeg.wasm)
+  const hasSharedArrayBuffer = typeof SharedArrayBuffer !== "undefined";
+
+  if (hasSharedArrayBuffer) {
+    try {
+      const ffmpeg = await getFFmpeg();
+      onProgress(60);
+
+      const { fetchFile } = await import("@ffmpeg/util");
+      await ffmpeg.writeFile("input.webm", await fetchFile(webmBlob));
+      onProgress(65);
+
+      // Race FFmpeg against a 60s timeout
+      const conversionPromise = ffmpeg.exec([
+        "-i", "input.webm",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-crf", "22",
+        "-pix_fmt", "yuv420p",
+        "-movflags", "+faststart",
+        "output.mp4",
+      ]);
+
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("FFmpeg timeout")), 60000),
+      );
+
+      await Promise.race([conversionPromise, timeoutPromise]);
+      onProgress(90);
+
+      const data = await ffmpeg.readFile("output.mp4");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      finalBlob = new Blob([data as any], { type: "video/mp4" });
+      ext = "mp4";
+
+      await ffmpeg.deleteFile("input.webm").catch(() => {});
+      await ffmpeg.deleteFile("output.mp4").catch(() => {});
+    } catch (err) {
+      console.warn("MP4 conversion failed, exporting as WebM:", err);
+    }
+  }
+
+  onProgress(100);
+
+  // Download
+  const url = URL.createObjectURL(finalBlob);
   const link = document.createElement("a");
-  link.download = "sickpreviews-export.webm";
+  link.download = `sickpreviews-export.${ext}`;
   link.href = url;
   link.click();
   URL.revokeObjectURL(url);
 
-  return blob;
+  return finalBlob;
 }

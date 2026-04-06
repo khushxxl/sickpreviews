@@ -10,39 +10,91 @@ import {
 import { useVideoPlayer } from "@/lib/use-video-player";
 import { exportVideo } from "@/lib/video-export";
 
-const BUILT_IN_BACKGROUNDS = [
+type DeviceType = "iPhone" | "MacBook";
+
+interface MockupBg {
+  name: string;
+  src: string;
+  thumb: string;
+  corners: [Point, Point, Point, Point];
+  device: DeviceType;
+  fullScene?: boolean; // true = bg has its own scene, don't change bg color
+}
+
+const BUILT_IN_BACKGROUNDS: MockupBg[] = [
   {
     name: "Hand 1",
     src: "/bg-1-transparent.png",
     thumb: "/default-background.png",
+    device: "iPhone",
     corners: [
       { x: 114, y: 80 },
       { x: 251, y: 96 },
       { x: 324, y: 426 },
       { x: 190, y: 432 },
-    ] as [Point, Point, Point, Point],
+    ],
   },
   {
     name: "Hand 2",
     src: "/bg-2-transparent.png",
     thumb: "/bg-2.png",
+    device: "iPhone",
     corners: [
       { x: 134, y: 92 },
       { x: 293, y: 92 },
       { x: 290, y: 443 },
       { x: 137, y: 443 },
-    ] as [Point, Point, Point, Point],
+    ],
   },
   {
     name: "Hand 3",
     src: "/bg-3-transparent.png",
     thumb: "/bg-3-transparent.png",
+    device: "iPhone",
     corners: [
       { x: 86, y: 57 },
       { x: 338, y: 57 },
       { x: 295, y: 483 },
       { x: 135, y: 483 },
-    ] as [Point, Point, Point, Point],
+    ],
+  },
+  {
+    name: "MacBook 1",
+    src: "/bg-1-macbook.png",
+    thumb: "/bg-1-macbook.png",
+    device: "MacBook" as DeviceType,
+    corners: [
+      { x: 91, y: 136 },
+      { x: 366, y: 137 },
+      { x: 364, y: 320 },
+      { x: 90, y: 321 },
+    ],
+  },
+  {
+    name: "MacBook 2",
+    src: "/bg-2-macbook.png",
+    thumb: "/bg-2-macbook.png",
+    device: "MacBook" as DeviceType,
+    fullScene: true,
+    corners: [
+      { x: 195, y: 709 },
+      { x: 1188, y: 355 },
+      { x: 1328, y: 1074 },
+      { x: 407, y: 1490 },
+    ],
+  },
+  {
+    name: "MacBook 3",
+    src: "/bg-3-macbook.png",
+    thumb: "/bg-3-macbook.png",
+    device: "MacBook" as DeviceType,
+    fullScene: true,
+    corners: [
+      { x: 392, y: 202 },
+      { x: 1719, y: 521 },
+      { x: 1589, y: 1448 },
+      { x: 356, y: 1084 },
+    ],
   },
 ];
 
@@ -50,6 +102,15 @@ const BG_COLORS = [
   { name: "White", value: "#e8e8e8" },
   { name: "Black", value: "#111111" },
   { name: "Transparent", value: null },
+];
+
+const BG_IMAGES = [
+  { name: "Blue 1", src: "/bg-colors/blue_distortion_1.png" },
+  { name: "Blue 2", src: "/bg-colors/blue_distortion_2.png" },
+  { name: "Red 1", src: "/bg-colors/red_distortion_1.png" },
+  { name: "Red 2", src: "/bg-colors/red_distortion_2.png" },
+  { name: "Red 3", src: "/bg-colors/red_distortion_3.png" },
+  { name: "Red 4", src: "/bg-colors/red_distortion_4.png" },
 ];
 
 const ASPECT_RATIOS = [
@@ -136,6 +197,8 @@ export default function SickPreviews() {
     BUILT_IN_BACKGROUNDS[0].corners,
   );
   const [opacity, setOpacity] = useState(1);
+  const [selectedDevice, setSelectedDevice] = useState<DeviceType>("iPhone");
+  const [deviceDropdownOpen, setDeviceDropdownOpen] = useState(false);
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
   const [canvasScale, setCanvasScale] = useState(1);
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
@@ -147,6 +210,11 @@ export default function SickPreviews() {
   const [showNotch, setShowNotch] = useState(false);
   const [showToast, setShowToast] = useState(false);
   const [bgColor, setBgColor] = useState<string | null>("#e8e8e8");
+  const [bgImageSrc, setBgImageSrc] = useState<string | null>(null);
+  const [bgColorImage, setBgColorImage] = useState<HTMLImageElement | null>(
+    null,
+  );
+  const [bgOverlay, setBgOverlay] = useState(0); // 0-1 dark overlay
   const [aspectRatio, setAspectRatio] = useState<number | null>(null);
   const [deviceZoom, setDeviceZoom] = useState(0);
   const [showIntro, setShowIntro] = useState(true);
@@ -189,6 +257,17 @@ export default function SickPreviews() {
       // Cleanup on unmount
     };
   }, [contentType, bgImage]);
+
+  // Load background image when bgImageSrc changes
+  useEffect(() => {
+    if (!bgImageSrc) {
+      setBgColorImage(null);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => setBgColorImage(img);
+    img.src = bgImageSrc;
+  }, [bgImageSrc]);
 
   // Update bg texture when bgImage changes
   useEffect(() => {
@@ -336,8 +415,20 @@ export default function SickPreviews() {
     ctx.roundRect(canvasOffset.x, canvasOffset.y, displayW, displayH, 20);
     ctx.clip();
 
-    // Draw background color or checkerboard
-    if (bgColor) {
+    // Draw background color, image, or checkerboard
+    if (bgColorImage) {
+      ctx.drawImage(
+        bgColorImage,
+        canvasOffset.x,
+        canvasOffset.y,
+        displayW,
+        displayH,
+      );
+      if (bgOverlay > 0) {
+        ctx.fillStyle = `rgba(0, 0, 0, ${bgOverlay})`;
+        ctx.fillRect(canvasOffset.x, canvasOffset.y, displayW, displayH);
+      }
+    } else if (bgColor) {
       ctx.fillStyle = bgColor;
       ctx.fillRect(canvasOffset.x, canvasOffset.y, displayW, displayH);
     } else {
@@ -578,6 +669,8 @@ export default function SickPreviews() {
     screenRadius,
     showNotch,
     bgColor,
+    bgColorImage,
+    bgOverlay,
     aspectRatio,
     contentType,
     videoPlayer.videoElement,
@@ -763,7 +856,13 @@ export default function SickPreviews() {
     offscreen.height = ih;
     const ctx = offscreen.getContext("2d");
     if (!ctx) return;
-    if (bgColor) {
+    if (bgColorImage) {
+      ctx.drawImage(bgColorImage, 0, 0, iw, ih);
+      if (bgOverlay > 0) {
+        ctx.fillStyle = `rgba(0, 0, 0, ${bgOverlay})`;
+        ctx.fillRect(0, 0, iw, ih);
+      }
+    } else if (bgColor) {
       ctx.fillStyle = bgColor;
       ctx.fillRect(0, 0, iw, ih);
     }
@@ -843,6 +942,8 @@ export default function SickPreviews() {
     screenRadius,
     showNotch,
     bgColor,
+    bgColorImage,
+    bgOverlay,
     cropRegion,
     aspectRatio,
   ]);
@@ -1212,8 +1313,8 @@ export default function SickPreviews() {
           </button> */}
         </div>
 
-        {/* Background Color */}
-        <div>
+        {/* Background Color — hidden for fullScene mockups */}
+        {!(activeBgIdx >= 0 && BUILT_IN_BACKGROUNDS[activeBgIdx]?.fullScene) && <div>
           <p className="text-[10px] uppercase tracking-widest text-white/25 mb-2">
             Background
           </p>
@@ -1221,9 +1322,12 @@ export default function SickPreviews() {
             {BG_COLORS.map((c) => (
               <button
                 key={c.name}
-                onClick={() => setBgColor(c.value)}
+                onClick={() => {
+                  setBgColor(c.value);
+                  setBgImageSrc(null);
+                }}
                 className={`w-8 h-8 rounded-lg border-2 transition-all ${
-                  bgColor === c.value
+                  bgColor === c.value && !bgImageSrc
                     ? "border-white/40 scale-110"
                     : "border-white/[0.08] hover:border-white/20"
                 }`}
@@ -1247,7 +1351,49 @@ export default function SickPreviews() {
               </button>
             ))}
           </div>
-        </div>
+          <div className="flex gap-1.5 mt-2 flex-wrap">
+            {BG_IMAGES.map((bg) => (
+              <button
+                key={bg.name}
+                onClick={() => {
+                  setBgImageSrc(bg.src);
+                  setBgColor(null);
+                }}
+                className={`w-8 h-8 rounded-lg border-2 overflow-hidden transition-all ${
+                  bgImageSrc === bg.src
+                    ? "border-white/40 scale-110"
+                    : "border-white/[0.08] hover:border-white/20"
+                }`}
+                title={bg.name}
+              >
+                <img
+                  src={bg.src}
+                  alt={bg.name}
+                  className="w-full h-full object-cover"
+                />
+              </button>
+            ))}
+          </div>
+          {bgImageSrc && (
+            <div className="flex items-center gap-2 h-10 rounded-full bg-[#222222] border border-white/[0.06] px-3 min-w-0 mt-2">
+              <span className="text-[11px] text-white/40 flex-shrink-0">
+                Darken
+              </span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={bgOverlay}
+                onChange={(e) => setBgOverlay(parseFloat(e.target.value))}
+                className="min-w-0 w-full accent-white/50 h-px"
+              />
+              <span className="text-[11px] font-mono text-white/30 w-6 text-right flex-shrink-0">
+                {Math.round(bgOverlay * 100)}
+              </span>
+            </div>
+          )}
+        </div>}
 
         {/* Export */}
         <button
@@ -1268,11 +1414,7 @@ export default function SickPreviews() {
           className="flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-medium transition-all hover:scale-[1.02]"
           style={{ backgroundColor: "#FFDD00", color: "#000" }}
         >
-          <img
-            src="https://cdn.buymeacoffee.com/buttons/bmc-new-btn-logo.svg"
-            alt=""
-            className="h-4 w-4"
-          />
+          <img src="/bmc-logo.svg" alt="" className="h-4 w-4" />
           Buy me a coffee
         </a>
 
@@ -1288,27 +1430,138 @@ export default function SickPreviews() {
 
         <div className="h-px bg-[#1e1e1e]" />
 
-        <p className="text-[10px] uppercase tracking-widest text-white/25">
-          Mockups
-        </p>
-        <div className="grid grid-cols-1 gap-2">
-          {BUILT_IN_BACKGROUNDS.map((bg, idx) => (
-            <button
-              key={idx}
-              onClick={() => selectBuiltInBg(idx)}
-              className={`aspect-[3/4] rounded-xl overflow-hidden border-2 transition-all hover:scale-[1.03] ${
-                activeBgIdx === idx
-                  ? "border-white/30 shadow-lg shadow-white/5"
-                  : "border-white/[0.06] hover:border-white/15"
-              }`}
+        {/* Device dropdown */}
+        <div className="relative">
+          <button
+            onClick={() => setDeviceDropdownOpen(!deviceDropdownOpen)}
+            className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-[#1e1e1e] hover:bg-[#252525] transition-all"
+          >
+            <div className="flex items-center gap-2">
+              {selectedDevice === "iPhone" ? (
+                <svg
+                  className="w-3.5 h-5 text-white/50"
+                  viewBox="0 0 14 20"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                >
+                  <rect x="1" y="0" width="12" height="20" rx="3" />
+                  <circle cx="7" cy="17" r="1" fill="currentColor" />
+                </svg>
+              ) : (
+                <svg
+                  className="w-5 h-4 text-white/50"
+                  viewBox="0 0 20 16"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                >
+                  <rect x="2" y="0" width="16" height="11" rx="1.5" />
+                  <path
+                    d="M0 13.5h20v1a1.5 1.5 0 01-1.5 1.5h-17A1.5 1.5 0 010 14.5v-1z"
+                    fill="currentColor"
+                    opacity="0.4"
+                  />
+                </svg>
+              )}
+              <span className="text-sm font-medium text-white/70">
+                {selectedDevice}
+              </span>
+            </div>
+            <svg
+              className={`w-4 h-4 text-white/30 transition-transform ${deviceDropdownOpen ? "rotate-180" : ""}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
             >
-              <img
-                src={bg.thumb}
-                alt={bg.name}
-                className="w-full h-full object-cover bg-white"
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M19 9l-7 7-7-7"
               />
-            </button>
-          ))}
+            </svg>
+          </button>
+
+          {deviceDropdownOpen && (
+            <div className="absolute top-full left-0 right-0 mt-1 z-20 rounded-xl bg-[#1e1e1e] border border-white/[0.06] overflow-hidden shadow-xl shadow-black/40">
+              {(["iPhone", "MacBook"] as DeviceType[]).map((device) => (
+                <button
+                  key={device}
+                  onClick={() => {
+                    setSelectedDevice(device);
+                    setDeviceDropdownOpen(false);
+                  }}
+                  className={`w-full flex items-center gap-2 px-3 py-2.5 text-sm transition-all ${
+                    selectedDevice === device
+                      ? "bg-[#2a2a2a] text-white/80"
+                      : "text-white/40 hover:bg-[#252525] hover:text-white/60"
+                  }`}
+                >
+                  {device === "iPhone" ? (
+                    <svg
+                      className="w-3.5 h-5"
+                      viewBox="0 0 14 20"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    >
+                      <rect x="1" y="0" width="12" height="20" rx="3" />
+                      <circle cx="7" cy="17" r="1" fill="currentColor" />
+                    </svg>
+                  ) : (
+                    <svg
+                      className="w-5 h-4"
+                      viewBox="0 0 20 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                    >
+                      <rect x="2" y="0" width="16" height="11" rx="1.5" />
+                      <path
+                        d="M0 13.5h20v1a1.5 1.5 0 01-1.5 1.5h-17A1.5 1.5 0 010 14.5v-1z"
+                        fill="currentColor"
+                        opacity="0.4"
+                      />
+                    </svg>
+                  )}
+                  {device}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Mockup grid */}
+        <div className="grid grid-cols-1 gap-2">
+          {BUILT_IN_BACKGROUNDS.filter(
+            (bg) => bg.device === selectedDevice,
+          ).map((bg) => {
+            const idx = BUILT_IN_BACKGROUNDS.indexOf(bg);
+            return (
+              <button
+                key={idx}
+                onClick={() => selectBuiltInBg(idx)}
+                className={`aspect-[3/4] rounded-xl overflow-hidden border-2 transition-all hover:scale-[1.03] ${
+                  activeBgIdx === idx
+                    ? "border-white/30 shadow-lg shadow-white/5"
+                    : "border-white/[0.06] hover:border-white/15"
+                }`}
+              >
+                <img
+                  src={bg.thumb}
+                  alt={bg.name}
+                  className="w-full h-full object-cover bg-white"
+                />
+              </button>
+            );
+          })}
+          {BUILT_IN_BACKGROUNDS.filter((bg) => bg.device === selectedDevice)
+            .length === 0 && (
+            <div className="py-8 text-center text-xs text-white/20">
+              Coming soon
+            </div>
+          )}
         </div>
         <label className="flex items-center justify-center gap-1.5 cursor-pointer py-2.5 rounded-xl bg-[#1e1e1e] hover:bg-[#252525] border border-dashed border-white/[0.08] hover:border-white/[0.15] text-white/25 hover:text-white/50 transition-all text-xs">
           <svg
