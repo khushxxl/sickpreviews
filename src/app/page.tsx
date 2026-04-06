@@ -2,6 +2,13 @@
 
 import { useRef, useState, useCallback, useEffect } from "react";
 import { Point, computeInverseHomography, warpImage } from "@/lib/homography";
+import {
+  createWarpContext,
+  updateBackgroundTexture,
+  WebGLWarpContext,
+} from "@/lib/webgl-warp";
+import { useVideoPlayer } from "@/lib/use-video-player";
+import { exportVideo } from "@/lib/video-export";
 
 const BUILT_IN_BACKGROUNDS = [
   {
@@ -54,6 +61,12 @@ const ASPECT_RATIOS = [
 ];
 
 const HANDLE_RADIUS = 10;
+
+function formatTime(s: number): string {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, "0")}`;
+}
 
 /** Draw a Dynamic Island pill at the top-center of the warped screen quad */
 function drawNotch(
@@ -136,6 +149,71 @@ export default function SickPreviews() {
   const [bgColor, setBgColor] = useState<string | null>("#e8e8e8");
   const [aspectRatio, setAspectRatio] = useState<number | null>(null);
   const [deviceZoom, setDeviceZoom] = useState(0);
+  const [showIntro, setShowIntro] = useState(true);
+  const [introText, setIntroText] = useState("");
+  const [introFading, setIntroFading] = useState(false);
+  const [alertMessage, setAlertMessage] = useState<string | null>(null);
+  const [showVideoModal, setShowVideoModal] = useState(() => {
+    if (typeof window !== "undefined") {
+      return !localStorage.getItem("sickpreviews-video-modal-seen");
+    }
+    return false;
+  });
+  const [contentType, setContentType] = useState<"image" | "video">("image");
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState(0);
+  const exportAbortRef = useRef<AbortController | null>(null);
+  const warpCtxRef = useRef<WebGLWarpContext | null>(null);
+  const renderRef = useRef<() => void>(() => {});
+
+  // Video player hook — use ref to avoid stale closure
+  const onVideoFrame = useCallback(() => {
+    renderRef.current();
+  }, []);
+  const videoPlayer = useVideoPlayer(videoUrl, onVideoFrame);
+
+  // Initialize WebGL context for video rendering
+  useEffect(() => {
+    if (contentType === "video" && bgImage && !warpCtxRef.current) {
+      const ctx = createWarpContext(
+        bgImage.naturalWidth,
+        bgImage.naturalHeight,
+      );
+      if (ctx) {
+        updateBackgroundTexture(ctx, bgImage);
+        warpCtxRef.current = ctx;
+      }
+    }
+    return () => {
+      // Cleanup on unmount
+    };
+  }, [contentType, bgImage]);
+
+  // Update bg texture when bgImage changes
+  useEffect(() => {
+    if (warpCtxRef.current && bgImage) {
+      updateBackgroundTexture(warpCtxRef.current, bgImage);
+    }
+  }, [bgImage]);
+
+  // Typewriter intro effect
+  useEffect(() => {
+    const text = "sickpreviews.com";
+    let i = 0;
+    const interval = setInterval(() => {
+      i++;
+      setIntroText(text.slice(0, i));
+      if (i >= text.length) {
+        clearInterval(interval);
+        setTimeout(() => {
+          setIntroFading(true);
+          setTimeout(() => setShowIntro(false), 400);
+        }, 500);
+      }
+    }, 50);
+    return () => clearInterval(interval);
+  }, []);
 
   const loadBgFromSrc = useCallback((src: string) => {
     const img = new Image();
@@ -156,7 +234,7 @@ export default function SickPreviews() {
   const updateCanvasSize = useCallback(() => {
     if (!containerRef.current || !bgImage) return;
     const container = containerRef.current;
-    const pad = 60;
+    const pad = 80;
     const cw = container.clientWidth;
     const ch = container.clientHeight;
     const iw = bgImage.naturalWidth;
@@ -283,8 +361,88 @@ export default function SickPreviews() {
       y: (p.y - cropSy) * canvasScale + imgOffY,
     });
 
-    if (screenImage && displayW > 0 && displayH > 0) {
-      // Render at high resolution for sharp text, then scale down for display
+    // Video mode: use CPU warp (same path as images for consistent coordinates)
+    if (
+      contentType === "video" &&
+      videoPlayer.videoElement &&
+      videoPlayer.videoElement.readyState >= 2 &&
+      displayW > 0 &&
+      displayH > 0
+    ) {
+      const vid = videoPlayer.videoElement;
+      const srcW = vid.videoWidth;
+      const srcH = vid.videoHeight;
+      // Same scale as image path but capped to avoid oversized canvas on extreme zoom
+      const minHiW = 1760;
+      const hiResScale = Math.min(
+        Math.max(minHiW / cropSw, window.devicePixelRatio || 1),
+        8,
+      );
+      const hiW = Math.round(cropSw * hiResScale);
+      const hiH = Math.round(cropSh * hiResScale);
+      const offscreen = document.createElement("canvas");
+      offscreen.width = hiW;
+      offscreen.height = hiH;
+      const offCtx = offscreen.getContext("2d");
+      if (offCtx) {
+        offCtx.imageSmoothingEnabled = true;
+        offCtx.imageSmoothingQuality = "high";
+        offCtx.drawImage(
+          bgImage,
+          cropSx,
+          cropSy,
+          cropSw,
+          cropSh,
+          0,
+          0,
+          hiW,
+          hiH,
+        );
+        const bgData = offCtx.getImageData(0, 0, hiW, hiH);
+        // Draw video frame to temp canvas
+        const srcCanvas = document.createElement("canvas");
+        srcCanvas.width = srcW;
+        srcCanvas.height = srcH;
+        const srcCtx = srcCanvas.getContext("2d");
+        if (srcCtx) {
+          if (screenRadius) {
+            const r = Math.min(srcW, srcH) * 0.12;
+            srcCtx.beginPath();
+            srcCtx.roundRect(0, 0, srcW, srcH, r);
+            srcCtx.clip();
+          }
+          srcCtx.drawImage(vid, 0, 0, srcW, srcH);
+          const srcData = srcCtx.getImageData(0, 0, srcW, srcH);
+          const srcCorners: [Point, Point, Point, Point] = [
+            { x: 0, y: 0 },
+            { x: srcW - 1, y: 0 },
+            { x: srcW - 1, y: srcH - 1 },
+            { x: 0, y: srcH - 1 },
+          ];
+          const croppedCorners = corners.map((p) => ({
+            x: (p.x - cropSx) * hiResScale,
+            y: (p.y - cropSy) * hiResScale,
+          })) as [Point, Point, Point, Point];
+          const invH = computeInverseHomography(srcCorners, croppedCorners);
+          warpImage(
+            bgData.data,
+            srcData.data,
+            invH,
+            croppedCorners,
+            srcW,
+            srcH,
+            hiW,
+            hiH,
+            opacity,
+          );
+          offCtx.putImageData(bgData, 0, 0);
+        }
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(offscreen, imgOffX, imgOffY, imgDisplayW, imgDisplayH);
+      }
+    } else if (screenImage && displayW > 0 && displayH > 0) {
+      // Image mode: CPU warp (existing path)
       const minHiW = 1760;
       const hiResScale = Math.max(
         minHiW / cropSw,
@@ -421,9 +579,13 @@ export default function SickPreviews() {
     showNotch,
     bgColor,
     aspectRatio,
+    contentType,
+    videoPlayer.videoElement,
+    bgNaturalSize,
   ]);
 
   useEffect(() => {
+    renderRef.current = render;
     requestAnimationFrame(render);
   }, [render]);
 
@@ -524,8 +686,38 @@ export default function SickPreviews() {
     const file = e.target.files?.[0];
     if (!file) return;
     setScreenFileName(file.name);
-    setScreenImage(await loadImage(file));
-    setShowToast(true);
+
+    if (file.type.startsWith("video/")) {
+      // Check video duration before accepting
+      const url = URL.createObjectURL(file);
+      const tempVid = document.createElement("video");
+      tempVid.preload = "metadata";
+      tempVid.src = url;
+      await new Promise<void>((resolve) => {
+        tempVid.onloadedmetadata = () => resolve();
+      });
+      if (tempVid.duration > 30) {
+        URL.revokeObjectURL(url);
+        setAlertMessage("Video must be 30 seconds or less");
+        e.target.value = "";
+        return;
+      }
+      // Video mode
+      setContentType("video");
+      setScreenImage(null);
+      if (videoUrl) URL.revokeObjectURL(videoUrl);
+      setVideoUrl(url);
+      setShowToast(true);
+    } else {
+      // Image mode
+      setContentType("image");
+      if (videoUrl) {
+        URL.revokeObjectURL(videoUrl);
+        setVideoUrl(null);
+      }
+      setScreenImage(await loadImage(file));
+      setShowToast(true);
+    }
   };
 
   const handleBgUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -655,8 +847,68 @@ export default function SickPreviews() {
     aspectRatio,
   ]);
 
+  const handleVideoExport = useCallback(async () => {
+    if (!bgImage || !videoPlayer.videoElement) return;
+    const abort = new AbortController();
+    exportAbortRef.current = abort;
+    setIsExporting(true);
+    setExportProgress(0);
+    try {
+      videoPlayer.pause();
+      await exportVideo({
+        video: videoPlayer.videoElement,
+        bgImage,
+        corners,
+        opacity,
+        roundedCorners: screenRadius,
+        cropRegion,
+        bgColor,
+        aspectRatio,
+        fps: videoPlayer.fps,
+        onProgress: setExportProgress,
+        signal: abort.signal,
+      });
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        // Cancelled
+      } else {
+        console.error("Video export failed:", err);
+      }
+    } finally {
+      setIsExporting(false);
+      setExportProgress(0);
+      exportAbortRef.current = null;
+    }
+  }, [
+    bgImage,
+    videoPlayer,
+    corners,
+    opacity,
+    screenRadius,
+    cropRegion,
+    bgNaturalSize,
+    bgColor,
+    aspectRatio,
+  ]);
+
+  const cancelExport = useCallback(() => {
+    exportAbortRef.current?.abort();
+  }, []);
+
   return (
     <div className="h-screen flex flex-col md:flex-row bg-[#0a0a0a] text-gray-300 overflow-hidden relative">
+      {/* Typewriter Intro */}
+      {showIntro && (
+        <div
+          className={`fixed inset-0 z-50 bg-[#0a0a0a] flex items-center justify-center ${introFading ? "animate-fade-out" : ""}`}
+        >
+          <span className="text-2xl md:text-4xl font-semibold tracking-tight text-white">
+            {introText}
+            <span className="animate-cursor text-white/60">|</span>
+          </span>
+        </div>
+      )}
+
       {/* Canvas */}
       <div className="absolute inset-0 gradient-mesh">
         <div
@@ -674,26 +926,58 @@ export default function SickPreviews() {
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/webp"
+            accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm"
             onChange={handleScreenUpload}
             className="hidden"
           />
           {draggingIdx !== null && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-black/50 backdrop-blur-md px-3 py-1.5 rounded-full text-[11px] font-mono text-white/70 pointer-events-none border border-white/10">
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-[#1a1a1a] px-3 py-1.5 rounded-full text-[11px] font-mono text-white/70 pointer-events-none border border-white/10">
               {Math.round(corners[draggingIdx].x)},{" "}
               {Math.round(corners[draggingIdx].y)}
             </div>
           )}
+
+          {/* Utility navbar */}
+          <div className="hidden md:flex absolute top-4 left-1/2 -translate-x-1/2 z-20 items-center gap-1 px-2 py-1.5 rounded-full bg-[#161616] border border-white/[0.06]">
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="px-4 py-2 rounded-lg text-xs font-medium text-white/50 hover:text-white/80 hover:bg-[#252525] transition-all"
+            >
+              Upload
+            </button>
+            <div className="w-px h-5 bg-white/[0.06]" />
+            <button
+              onClick={() =>
+                setCorners(
+                  BUILT_IN_BACKGROUNDS[activeBgIdx >= 0 ? activeBgIdx : 0]
+                    .corners,
+                )
+              }
+              className="px-4 py-2 rounded-lg text-xs font-medium text-white/50 hover:text-white/80 hover:bg-[#252525] transition-all"
+            >
+              Reset
+            </button>
+            <div className="w-px h-5 bg-white/[0.06]" />
+            <button
+              onClick={
+                contentType === "video" ? handleVideoExport : handleExport
+              }
+              disabled={!bgImage}
+              className="px-4 py-2 rounded-lg text-xs font-medium bg-white text-black hover:bg-white/90 transition-all disabled:opacity-30"
+            >
+              {contentType === "video" ? "Export Video" : "Export PNG"}
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Left Panel — glassmorphism */}
-      <div className="hidden md:flex absolute top-4 left-4 bottom-4 w-60 flex-col gap-4 p-4 rounded-2xl bg-white/[0.04] backdrop-blur-2xl border border-white/[0.08] shadow-2xl shadow-black/40 overflow-y-auto z-10">
-        <h1 className="text-md cursor-pointer font-semibold text-white/90 tracking-tight">
+      <div className="hidden md:flex absolute top-4 left-4 bottom-4 w-60 flex-col gap-4 p-4 rounded-2xl bg-[#161616] border border-white/[0.08] shadow-2xl shadow-black/50 overflow-y-auto z-10">
+        <h1 className="text-sm cursor-pointer font-semibold text-white/90 tracking-tight">
           sickpreviews.com
         </h1>
 
-        <div className="h-px bg-white/[0.06]" />
+        <div className="h-px bg-[#1e1e1e]" />
 
         {/* Aspect Ratio */}
         <div>
@@ -707,8 +991,8 @@ export default function SickPreviews() {
                 onClick={() => setAspectRatio(ar.value)}
                 className={`flex flex-col items-center gap-1 py-1.5 rounded-lg transition-all ${
                   aspectRatio === ar.value
-                    ? "bg-white/15"
-                    : "bg-white/[0.03] hover:bg-white/[0.08]"
+                    ? "bg-[#2a2a2a]"
+                    : "bg-[#1e1e1e] hover:bg-[#252525]"
                 }`}
               >
                 <div className="flex items-center justify-center w-full h-8">
@@ -716,8 +1000,8 @@ export default function SickPreviews() {
                     <div
                       className={`rounded-[3px] border transition-all ${
                         aspectRatio === ar.value
-                          ? "border-white/40 bg-white/10"
-                          : "border-white/15 bg-white/[0.04]"
+                          ? "border-white/40 bg-[#2a2a2a]"
+                          : "border-white/15 bg-[#1e1e1e]"
                       }`}
                       style={{
                         width: ar.value >= 1 ? 28 : Math.round(28 * ar.value),
@@ -751,8 +1035,8 @@ export default function SickPreviews() {
           <p className="text-[10px] uppercase tracking-widest text-white/25 mb-2">
             Screen
           </p>
-          <label className="group flex items-center justify-center gap-2 cursor-pointer py-4 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.06] hover:border-white/[0.12] text-white/35 hover:text-white/60 transition-all text-xs">
-            {screenImage ? (
+          <label className="group flex items-center justify-center gap-2 cursor-pointer py-4 rounded-xl bg-[#1e1e1e] hover:bg-[#252525] border border-white/[0.06] hover:border-white/[0.12] text-white/35 hover:text-white/60 transition-all text-xs">
+            {screenImage || videoUrl ? (
               <span className="truncate px-2">{screenFileName}</span>
             ) : (
               <>
@@ -769,17 +1053,64 @@ export default function SickPreviews() {
                     d="M12 4v16m8-8H4"
                   />
                 </svg>
-                <span>Upload screenshot</span>
+                <span>Upload screenshot or video</span>
               </>
             )}
             <input
               type="file"
-              accept="image/png,image/jpeg,image/webp"
+              accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm"
               onChange={handleScreenUpload}
               className="hidden"
             />
           </label>
         </div>
+
+        {/* Video playback controls */}
+        {contentType === "video" && videoPlayer.videoElement && (
+          <div className="space-y-2">
+            <p className="text-[10px] uppercase tracking-widest text-white/25">
+              Video
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={videoPlayer.togglePlayPause}
+                className="w-8 h-8 flex items-center justify-center rounded-lg bg-[#222222] hover:bg-[#2a2a2a] transition-all"
+              >
+                {videoPlayer.isPlaying ? (
+                  <svg
+                    className="w-3.5 h-3.5 text-white/60"
+                    fill="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <rect x="6" y="4" width="4" height="16" />
+                    <rect x="14" y="4" width="4" height="16" />
+                  </svg>
+                ) : (
+                  <svg
+                    className="w-3.5 h-3.5 text-white/60"
+                    fill="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <polygon points="5,3 19,12 5,21" />
+                  </svg>
+                )}
+              </button>
+              <span className="text-[10px] font-mono text-white/30 min-w-[60px]">
+                {formatTime(videoPlayer.currentTime)} /{" "}
+                {formatTime(videoPlayer.duration)}
+              </span>
+            </div>
+            <input
+              type="range"
+              min={0}
+              max={videoPlayer.duration || 1}
+              step={0.01}
+              value={videoPlayer.currentTime}
+              onChange={(e) => videoPlayer.seek(parseFloat(e.target.value))}
+              className="w-full accent-white/50 h-px"
+            />
+          </div>
+        )}
 
         {/* Points */}
         <div>
@@ -803,24 +1134,19 @@ export default function SickPreviews() {
                   .corners,
               )
             }
-            className="mt-2 w-full text-[10px] py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-white/25 hover:text-white/50 transition-all"
+            className="mt-2 w-full text-[10px] py-1.5 rounded-lg bg-[#1e1e1e] hover:bg-[#252525] text-white/25 hover:text-white/50 transition-all"
           >
             Reset
           </button>
         </div>
 
-        <div className="h-px bg-white/[0.06]" />
+        <div className="h-px bg-[#1e1e1e]" />
 
-        {/* Opacity */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-[10px] uppercase tracking-widest text-white/25">
-              Opacity
-            </p>
-            <span className="text-[10px] font-mono text-white/25">
-              {Math.round(opacity * 100)}%
-            </span>
-          </div>
+        {/* Opacity — pill slider */}
+        <div className="flex items-center gap-2 h-10 rounded-full bg-[#222222] border border-white/[0.06] px-3 min-w-0">
+          <span className="text-[11px] text-white/40 flex-shrink-0">
+            Opacity
+          </span>
           <input
             type="range"
             min={0}
@@ -828,39 +1154,42 @@ export default function SickPreviews() {
             step={0.01}
             value={opacity}
             onChange={(e) => setOpacity(parseFloat(e.target.value))}
-            className="w-full accent-white/50 h-px"
+            className="min-w-0 w-full accent-white/50 h-px"
           />
+          <span className="text-[11px] font-mono text-white/30 w-6 text-right flex-shrink-0">
+            {Math.round(opacity * 100)}
+          </span>
         </div>
 
-        {/* Zoom */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-[10px] uppercase tracking-widest text-white/25">
+        {/* Zoom — pill slider (hidden for video) */}
+        {contentType !== "video" && (
+          <div className="flex items-center gap-2 h-10 rounded-full bg-[#222222] border border-white/[0.06] px-3 min-w-0 overflow-hidden">
+            <span className="text-[11px] text-white/40 flex-shrink-0">
               Zoom
-            </p>
-            <span className="text-[10px] font-mono text-white/25">
-              {Math.round(deviceZoom * 100)}%
+            </span>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={deviceZoom}
+              onChange={(e) => setDeviceZoom(parseFloat(e.target.value))}
+              className="min-w-0 w-full accent-white/50 h-px"
+            />
+            <span className="text-[11px] font-mono text-white/30 w-6 text-right flex-shrink-0">
+              {Math.round(deviceZoom * 100)}
             </span>
           </div>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={deviceZoom}
-            onChange={(e) => setDeviceZoom(parseFloat(e.target.value))}
-            className="w-full accent-white/50 h-px"
-          />
-        </div>
+        )}
 
         {/* Toggles */}
         <div className="space-y-2">
           <button
             onClick={() => setScreenRadius(!screenRadius)}
-            className="flex items-center gap-3 cursor-pointer select-none w-full py-2 px-2.5 rounded-lg hover:bg-white/[0.04] transition-all"
+            className="flex items-center gap-3 cursor-pointer select-none w-full py-2 px-2.5 rounded-lg hover:bg-[#1e1e1e] transition-all"
           >
             <div
-              className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 ${screenRadius ? "bg-white/25" : "bg-white/[0.06]"}`}
+              className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 ${screenRadius ? "bg-[#3a3a3a]" : "bg-[#222222]"}`}
             >
               <div
                 className={`absolute top-0.5 w-4 h-4 rounded-full bg-white/90 shadow-sm transition-all ${screenRadius ? "left-[18px]" : "left-0.5"}`}
@@ -870,10 +1199,10 @@ export default function SickPreviews() {
           </button>
           {/* <button
             onClick={() => setShowNotch(!showNotch)}
-            className="flex items-center gap-3 cursor-pointer select-none w-full py-2 px-2.5 rounded-lg hover:bg-white/[0.04] transition-all"
+            className="flex items-center gap-3 cursor-pointer select-none w-full py-2 px-2.5 rounded-lg hover:bg-[#1e1e1e] transition-all"
           >
             <div
-              className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 ${showNotch ? "bg-white/25" : "bg-white/[0.06]"}`}
+              className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 ${showNotch ? "bg-[#3a3a3a]" : "bg-[#222222]"}`}
             >
               <div
                 className={`absolute top-0.5 w-4 h-4 rounded-full bg-white/90 shadow-sm transition-all ${showNotch ? "left-[18px]" : "left-0.5"}`}
@@ -881,14 +1210,6 @@ export default function SickPreviews() {
             </div>
             <span className="text-[11px] text-white/40">Dynamic Island</span>
           </button> */}
-        </div>
-
-        {/* Dynamic Island warning */}
-        <div className="flex items-start gap-2 px-2.5 py-2 rounded-lg bg-white">
-          <span className="text-black/60 text-sm flex-shrink-0">⚠</span>
-          <span className="text-[11px] text-black/70 leading-relaxed">
-            Your screenshot should include its own Dynamic Island
-          </span>
         </div>
 
         {/* Background Color */}
@@ -930,16 +1251,16 @@ export default function SickPreviews() {
 
         {/* Export */}
         <button
-          onClick={handleExport}
-          disabled={!bgImage}
-          className="mt-auto py-2.5 rounded-xl bg-white/[0.08] hover:bg-white/[0.14] disabled:opacity-20 text-white/70 hover:text-white/90 text-xs font-medium transition-all border border-white/[0.06] hover:border-white/[0.12]"
+          onClick={contentType === "video" ? handleVideoExport : handleExport}
+          disabled={!bgImage || isExporting}
+          className="mt-auto py-2.5 rounded-xl bg-[#252525] hover:bg-[#2e2e2e] disabled:opacity-20 text-white/70 hover:text-white/90 text-xs font-medium transition-all border border-white/[0.06] hover:border-white/[0.12]"
         >
-          Export PNG
+          {contentType === "video" ? "Export Video" : "Export PNG"}
         </button>
       </div>
 
       {/* Right Panel — glassmorphism */}
-      <div className="hidden md:flex absolute top-4 right-4 bottom-4 w-52 flex-col gap-4 p-4 rounded-2xl bg-white/[0.04] backdrop-blur-2xl border border-white/[0.08] shadow-2xl shadow-black/40 overflow-y-auto z-10">
+      <div className="hidden md:flex absolute top-4 right-4 bottom-4 w-52 flex-col gap-4 p-4 rounded-2xl bg-[#161616] border border-white/[0.08] shadow-2xl shadow-black/50 overflow-y-auto z-10">
         <a
           href="https://buymeacoffee.com/khushbuildsnow"
           target="_blank"
@@ -965,7 +1286,7 @@ export default function SickPreviews() {
           We build sick mobile apps
         </a>
 
-        <div className="h-px bg-white/[0.06]" />
+        <div className="h-px bg-[#1e1e1e]" />
 
         <p className="text-[10px] uppercase tracking-widest text-white/25">
           Mockups
@@ -989,7 +1310,7 @@ export default function SickPreviews() {
             </button>
           ))}
         </div>
-        <label className="flex items-center justify-center gap-1.5 cursor-pointer py-2.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] border border-dashed border-white/[0.08] hover:border-white/[0.15] text-white/25 hover:text-white/50 transition-all text-xs">
+        <label className="flex items-center justify-center gap-1.5 cursor-pointer py-2.5 rounded-xl bg-[#1e1e1e] hover:bg-[#252525] border border-dashed border-white/[0.08] hover:border-white/[0.15] text-white/25 hover:text-white/50 transition-all text-xs">
           <svg
             className="w-3.5 h-3.5"
             fill="none"
@@ -1006,7 +1327,7 @@ export default function SickPreviews() {
           <span>Custom</span>
           <input
             type="file"
-            accept="image/png,image/jpeg,image/webp"
+            accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm"
             onChange={handleBgUpload}
             className="hidden"
           />
@@ -1014,25 +1335,25 @@ export default function SickPreviews() {
       </div>
 
       {/* Mobile bottom bar */}
-      <div className="md:hidden fixed bottom-0 left-0 right-0 z-20 bg-black/80 backdrop-blur-xl border-t border-white/[0.08] p-3 flex flex-col gap-3 safe-bottom">
+      <div className="md:hidden fixed bottom-0 left-0 right-0 z-20 bg-[#161616] border-t border-white/[0.06] p-3 flex flex-col gap-3 safe-bottom">
         <div className="flex gap-2">
-          <label className="flex-1 flex items-center justify-center gap-2 cursor-pointer py-3 rounded-xl bg-white/[0.06] border border-white/[0.08] text-white/50 text-xs">
-            {screenImage ? (
+          <label className="flex-1 flex items-center justify-center gap-2 cursor-pointer py-3 rounded-xl bg-[#222222] border border-white/[0.08] text-white/50 text-xs">
+            {screenImage || videoUrl ? (
               <span className="truncate px-2">{screenFileName}</span>
             ) : (
-              <span>Upload screenshot</span>
+              <span>Upload screenshot or video</span>
             )}
             <input
               type="file"
-              accept="image/png,image/jpeg,image/webp"
+              accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm"
               onChange={handleScreenUpload}
               className="hidden"
             />
           </label>
           <button
-            onClick={handleExport}
-            disabled={!bgImage}
-            className="px-5 py-3 rounded-xl bg-white/[0.1] text-white/70 text-xs font-medium disabled:opacity-30"
+            onClick={contentType === "video" ? handleVideoExport : handleExport}
+            disabled={!bgImage || isExporting}
+            className="px-5 py-3 rounded-xl bg-[#252525] text-white/70 text-xs font-medium disabled:opacity-30"
           >
             Export
           </button>
@@ -1084,13 +1405,13 @@ export default function SickPreviews() {
       {/* Quality toast */}
       {showToast && (
         <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-30 animate-slide-up">
-          <div className="flex items-center gap-4 px-5 py-3 rounded-full bg-yellow-500/20 backdrop-blur-2xl border border-yellow-400/30 shadow-2xl shadow-black/50">
-            <span className="text-sm font-medium text-yellow-200">
-              Preview is low quality - Please export for full resolution
+          <div className="flex items-center gap-3 px-4 py-2.5 rounded-full bg-white shadow-xl shadow-black/20">
+            <span className="text-xs font-semibold text-black/70">
+              Preview is low quality export for full resolution
             </span>
             <button
               onClick={() => setShowToast(false)}
-              className="text-white/30 hover:text-white/60 transition-colors flex-shrink-0"
+              className="text-black hover:text-white/60 transition-colors flex-shrink-0"
             >
               <svg
                 className="w-4 h-4"
@@ -1106,6 +1427,151 @@ export default function SickPreviews() {
                 />
               </svg>
             </button>
+          </div>
+        </div>
+      )}
+      {/* Export modal */}
+      {isExporting && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="w-80 p-6 rounded-2xl bg-[#161616] border border-white/[0.08] shadow-2xl shadow-black/50 flex flex-col items-center gap-4">
+            <div className="w-10 h-10 rounded-full border-2 border-white/10 border-t-white/60 animate-spin" />
+            <p className="text-sm font-medium text-white/80">Exporting...</p>
+            <div className="w-full h-2 rounded-full bg-[#222222] overflow-hidden">
+              <div
+                className="h-full bg-white transition-all duration-200"
+                style={{ width: `${exportProgress}%` }}
+              />
+            </div>
+            <span className="text-xs font-mono text-white/40">
+              {exportProgress}%
+            </span>
+            <button
+              onClick={cancelExport}
+              className="mt-1 text-xs text-white/30 hover:text-white/60 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {/* Custom alert */}
+      {alertMessage && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="w-80 max-w-[90vw] p-6 rounded-2xl bg-black border border-white/[0.08] shadow-2xl shadow-black/50 flex flex-col items-center gap-4">
+            <div className="w-10 h-10 rounded-full bg-white/10 flex items-center justify-center">
+              <svg
+                className="w-5 h-5 text-white/60"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 9v2m0 4h.01M12 3l9.66 16.59A1 1 0 0120.66 21H3.34a1 1 0 01-.86-1.41L12 3z"
+                />
+              </svg>
+            </div>
+            <p className="text-sm text-white/70 text-center">{alertMessage}</p>
+            <button
+              onClick={() => setAlertMessage(null)}
+              className="w-full py-2.5 rounded-full bg-white text-black text-sm font-semibold hover:bg-white/90 transition-all"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Video feature modal */}
+      {showVideoModal && !showIntro && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="w-[700px] max-w-[92vw] max-h-[90vh] rounded-2xl bg-black border border-white/[0.08] shadow-2xl shadow-black/50 overflow-hidden flex flex-col md:flex-row">
+            {/* Left — Video preview */}
+            <div className="md:w-[280px] h-48 md:h-auto flex-shrink-0 bg-[#0a0a0a]">
+              <video
+                src="/video-preview.webm"
+                autoPlay
+                loop
+                muted
+                playsInline
+                className="w-full h-full object-cover"
+              />
+            </div>
+
+            {/* Right — Text */}
+            <div className="flex-1 flex flex-col p-6">
+              <div className="inline-block self-start px-2.5 py-1 rounded-full bg-white/10 text-[10px] uppercase tracking-widest text-white/50 font-medium mb-3">
+                New
+              </div>
+              <h2 className="text-xl font-semibold text-white tracking-tight">
+                Video support is here
+              </h2>
+              <p className="text-sm text-white/40 mt-1 mb-5">
+                sickpreviews now supports screen recordings
+              </p>
+
+              <div className="space-y-3 flex-1">
+                <div className="flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <span className="text-xs font-semibold text-white/60">
+                      1
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-white/70">
+                      Upload a video
+                    </p>
+                    <p className="text-xs text-white/30 mt-0.5">
+                      MP4, MOV, or WebM up to 30 seconds
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <span className="text-xs font-semibold text-white/60">
+                      2
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-white/70">
+                      Preview in real-time
+                    </p>
+                    <p className="text-xs text-white/30 mt-0.5">
+                      Play, pause, and scrub through your mockup
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-3">
+                  <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <span className="text-xs font-semibold text-white/60">
+                      3
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-white/70">
+                      Export as video
+                    </p>
+                    <p className="text-xs text-white/30 mt-0.5">
+                      Downloads as WebM with perspective warp baked in
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setShowVideoModal(false);
+                  localStorage.setItem("sickpreviews-video-modal-seen", "1");
+                }}
+                className="w-full py-3 mt-5 rounded-full bg-white text-black text-sm font-semibold hover:bg-white/90 transition-all"
+              >
+                Got it
+              </button>
+            </div>
           </div>
         </div>
       )}
