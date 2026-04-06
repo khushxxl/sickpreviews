@@ -19,34 +19,11 @@ body {
 
 .gradient-mesh {
   background:
-    radial-gradient(
-      ellipse 120% 80% at 15% -20%,
-      oklch(0.55 0.25 290 / 0.14) 0%,
-      transparent 55%
+    linear-gradient(
+      rgba(0, 0, 0, 0.82),
+      rgba(0, 0, 0, 0.90)
     ),
-    radial-gradient(
-      ellipse 90% 70% at 85% 110%,
-      oklch(0.55 0.2 230 / 0.12) 0%,
-      transparent 55%
-    ),
-    radial-gradient(
-      ellipse 60% 50% at 50% 50%,
-      oklch(0.5 0.18 270 / 0.05) 0%,
-      transparent 70%
-    ),
-    repeating-linear-gradient(
-      0deg,
-      oklch(1 0 0 / 0.02) 0px,
-      transparent 1px,
-      transparent 64px
-    ),
-    repeating-linear-gradient(
-      90deg,
-      oklch(1 0 0 / 0.02) 0px,
-      transparent 1px,
-      transparent 64px
-    ),
-    var(--background);
+    url('/bg-prod.png') center / contain no-repeat;
 }
 
 @keyframes slide-up {

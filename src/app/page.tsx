@@ -19,13 +19,14 @@ interface MockupBg {
   corners: [Point, Point, Point, Point];
   device: DeviceType;
   fullScene?: boolean; // true = bg has its own scene, don't change bg color
+  composite?: { frame: string; hand: string }; // runtime-generated composite
 }
 
 const BUILT_IN_BACKGROUNDS: MockupBg[] = [
   {
     name: "Hand 1",
     src: "/bg-1-transparent.png",
-    thumb: "/default-background.png",
+    thumb: "/bg-1-transparent.png",
     device: "iPhone",
     corners: [
       { x: 114, y: 80 },
@@ -37,7 +38,7 @@ const BUILT_IN_BACKGROUNDS: MockupBg[] = [
   {
     name: "Hand 2",
     src: "/bg-2-transparent.png",
-    thumb: "/bg-2.png",
+    thumb: "/bg-2-transparent.png",
     device: "iPhone",
     corners: [
       { x: 134, y: 92 },
@@ -209,7 +210,7 @@ export default function SickPreviews() {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [showNotch, setShowNotch] = useState(false);
   const [showToast, setShowToast] = useState(false);
-  const [bgColor, setBgColor] = useState<string | null>("#e8e8e8");
+  const [bgColor, setBgColor] = useState<string | null>("#111111");
   const [bgImageSrc, setBgImageSrc] = useState<string | null>(null);
   const [bgColorImage, setBgColorImage] = useState<HTMLImageElement | null>(
     null,
@@ -302,6 +303,45 @@ export default function SickPreviews() {
     };
     img.src = src;
   }, []);
+
+  const generateComposite = useCallback(
+    async (comp: { frame: string; hand: string }) => {
+      const W = 500,
+        H = 1000;
+      const PHONE_X = 33,
+        PHONE_Y = 20;
+      const loadImg = (s: string) =>
+        new Promise<HTMLImageElement>((res) => {
+          const i = new Image();
+          i.onload = () => res(i);
+          i.src = s;
+        });
+      const [frame, hand] = await Promise.all([
+        loadImg(comp.frame),
+        loadImg(comp.hand),
+      ]);
+      const c = document.createElement("canvas");
+      c.width = W;
+      c.height = H;
+      const ctx = c.getContext("2d")!;
+      // Draw hand behind phone — large enough to "hold" it
+      const handScale = 3.5;
+      const handW = hand.naturalWidth * handScale;
+      const handH = hand.naturalHeight * handScale;
+      const handX = (W - handW) / 2 + 20;
+      const handY = PHONE_Y + 882 - handH * 0.7;
+      ctx.drawImage(hand, handX, handY, handW, handH);
+      // Draw phone frame on top
+      ctx.drawImage(frame, PHONE_X, PHONE_Y, 433, 882);
+      const result = new Image();
+      result.onload = () => {
+        setBgImage(result);
+        setBgNaturalSize({ w: W, h: H });
+      };
+      result.src = c.toDataURL();
+    },
+    [],
+  );
 
   useEffect(() => {
     loadBgFromSrc(BUILT_IN_BACKGROUNDS[0].src);
@@ -825,7 +865,11 @@ export default function SickPreviews() {
   const selectBuiltInBg = (idx: number) => {
     setActiveBgIdx(idx);
     const bg = BUILT_IN_BACKGROUNDS[idx];
-    loadBgFromSrc(bg.src);
+    if (bg.composite) {
+      generateComposite(bg.composite);
+    } else {
+      loadBgFromSrc(bg.src);
+    }
     setCorners(bg.corners);
   };
 
@@ -1014,7 +1058,7 @@ export default function SickPreviews() {
       <div className="absolute inset-0 gradient-mesh">
         <div
           ref={containerRef}
-          className="absolute top-0 bottom-0 left-0 right-0 md:left-[17rem] md:right-[14.5rem]"
+          className="absolute top-0 bottom-0 left-0 right-0 md:left-64 md:right-56"
         >
           <canvas
             ref={canvasRef}
@@ -1072,73 +1116,30 @@ export default function SickPreviews() {
         </div>
       </div>
 
-      {/* Left Panel — glassmorphism */}
-      <div className="hidden md:flex absolute top-4 left-4 bottom-4 w-60 flex-col gap-4 p-4 rounded-2xl bg-[#161616] border border-white/[0.08] shadow-2xl shadow-black/50 overflow-y-auto z-10">
-        <h1 className="text-sm cursor-pointer font-semibold text-white/90 tracking-tight">
-          sickpreviews.com
-        </h1>
-
-        <div className="h-px bg-[#1e1e1e]" />
-
-        {/* Aspect Ratio */}
-        <div>
-          <p className="text-[10px] uppercase tracking-widest text-white/25 mb-2">
-            Aspect Ratio
-          </p>
-          <div className="grid grid-cols-4 gap-1.5">
-            {ASPECT_RATIOS.map((ar) => (
-              <button
-                key={ar.name}
-                onClick={() => setAspectRatio(ar.value)}
-                className={`flex flex-col items-center gap-1 py-1.5 rounded-lg transition-all ${
-                  aspectRatio === ar.value
-                    ? "bg-[#2a2a2a]"
-                    : "bg-[#1e1e1e] hover:bg-[#252525]"
-                }`}
-              >
-                <div className="flex items-center justify-center w-full h-8">
-                  {ar.value ? (
-                    <div
-                      className={`rounded-[3px] border transition-all ${
-                        aspectRatio === ar.value
-                          ? "border-white/40 bg-[#2a2a2a]"
-                          : "border-white/15 bg-[#1e1e1e]"
-                      }`}
-                      style={{
-                        width: ar.value >= 1 ? 28 : Math.round(28 * ar.value),
-                        height: ar.value >= 1 ? Math.round(28 / ar.value) : 28,
-                      }}
-                    />
-                  ) : (
-                    <div
-                      className={`w-5 h-6 rounded-[3px] border border-dashed transition-all ${
-                        aspectRatio === ar.value
-                          ? "border-white/40"
-                          : "border-white/15"
-                      }`}
-                    />
-                  )}
-                </div>
-                <span
-                  className={`text-[9px] transition-all ${
-                    aspectRatio === ar.value ? "text-white/60" : "text-white/25"
-                  }`}
-                >
-                  {ar.name}
-                </span>
-              </button>
-            ))}
-          </div>
+      {/* Left Panel */}
+      <div className="hidden md:flex absolute top-0 left-0 bottom-0 w-64 flex-col bg-black border-r border-white/[0.06] overflow-y-auto z-10">
+        {/* Brand */}
+        <div className="px-5 py-5 flex items-center gap-2.5">
+          {/* <div className="w-7 h-7 rounded-lg bg-white flex items-center justify-center">
+            <span className="text-[11px] font-black text-black">SP</span>
+          </div> */}
+          <h1 className="text-[14px] font-semibold text-white/90 tracking-tight">
+            sickpreviews
+          </h1>
         </div>
 
-        {/* Screen Upload */}
-        <div>
-          <p className="text-[10px] uppercase tracking-widest text-white/25 mb-2">
-            Screen
+        <div className="h-px bg-white/[0.06]" />
+
+        {/* Media Upload */}
+        <div className="px-5 pt-5 pb-4">
+          <p className="text-[11px] font-medium uppercase tracking-wider text-white/30 mb-3">
+            Media
           </p>
-          <label className="group flex items-center justify-center gap-2 cursor-pointer py-4 rounded-xl bg-[#1e1e1e] hover:bg-[#252525] border border-white/[0.06] hover:border-white/[0.12] text-white/35 hover:text-white/60 transition-all text-xs">
+          <label className="group flex items-center justify-center gap-2 cursor-pointer py-4 rounded-xl bg-[#181818] hover:bg-[#1c1c1c] border border-dashed border-white/[0.08] hover:border-white/12 text-white/30 hover:text-white/50 transition-all text-[12px]">
             {screenImage || videoUrl ? (
-              <span className="truncate px-2">{screenFileName}</span>
+              <span className="truncate px-2 text-white/50">
+                {screenFileName}
+              </span>
             ) : (
               <>
                 <svg
@@ -1168,18 +1169,15 @@ export default function SickPreviews() {
 
         {/* Video playback controls */}
         {contentType === "video" && videoPlayer.videoElement && (
-          <div className="space-y-2">
-            <p className="text-[10px] uppercase tracking-widest text-white/25">
-              Video
-            </p>
+          <div className="px-5 pb-4 space-y-2.5">
             <div className="flex items-center gap-2">
               <button
                 onClick={videoPlayer.togglePlayPause}
-                className="w-8 h-8 flex items-center justify-center rounded-lg bg-[#222222] hover:bg-[#2a2a2a] transition-all"
+                className="w-7 h-7 flex items-center justify-center rounded-md bg-[#1a1a1a] hover:bg-[#222] transition-all"
               >
                 {videoPlayer.isPlaying ? (
                   <svg
-                    className="w-3.5 h-3.5 text-white/60"
+                    className="w-3 h-3 text-white/50"
                     fill="currentColor"
                     viewBox="0 0 24 24"
                   >
@@ -1188,7 +1186,7 @@ export default function SickPreviews() {
                   </svg>
                 ) : (
                   <svg
-                    className="w-3.5 h-3.5 text-white/60"
+                    className="w-3 h-3 text-white/50"
                     fill="currentColor"
                     viewBox="0 0 24 24"
                   >
@@ -1196,7 +1194,7 @@ export default function SickPreviews() {
                   </svg>
                 )}
               </button>
-              <span className="text-[10px] font-mono text-white/30 min-w-[60px]">
+              <span className="text-[10px] font-mono text-white/25">
                 {formatTime(videoPlayer.currentTime)} /{" "}
                 {formatTime(videoPlayer.duration)}
               </span>
@@ -1208,233 +1206,276 @@ export default function SickPreviews() {
               step={0.01}
               value={videoPlayer.currentTime}
               onChange={(e) => videoPlayer.seek(parseFloat(e.target.value))}
-              className="w-full accent-white/50 h-px"
+              className="w-full accent-white/40 h-px"
             />
           </div>
         )}
 
-        {/* Points */}
-        <div>
-          <p className="text-[10px] uppercase tracking-widest text-white/25 mb-2">
-            Points
+        <div className="h-px bg-white/[0.06] mx-5" />
+
+        {/* Layout */}
+        <div className="px-5 pt-5 pb-4">
+          <p className="text-[11px] font-medium uppercase tracking-wider text-white/30 mb-3">
+            Layout
           </p>
-          <div className="space-y-1 px-1">
-            {corners.map((p, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-white/20" />
-                <span className="text-[11px] font-mono text-white/30">
-                  {Math.round(p.x)}, {Math.round(p.y)}
-                </span>
-              </div>
+          <div className="grid grid-cols-5 gap-1">
+            {ASPECT_RATIOS.map((ar) => (
+              <button
+                key={ar.name}
+                onClick={() => setAspectRatio(ar.value)}
+                className={`flex flex-col items-center gap-0.5 py-1.5 rounded-md text-[9px] transition-all ${
+                  aspectRatio === ar.value
+                    ? "bg-white/10 text-white/70"
+                    : "hover:bg-white/[0.04] text-white/25 hover:text-white/40"
+                }`}
+              >
+                <div className="flex items-center justify-center h-6">
+                  {ar.value ? (
+                    <div
+                      className={`rounded-[2px] border transition-all ${
+                        aspectRatio === ar.value
+                          ? "border-white/30"
+                          : "border-white/10"
+                      }`}
+                      style={{
+                        width: ar.value >= 1 ? 20 : Math.round(20 * ar.value),
+                        height: ar.value >= 1 ? Math.round(20 / ar.value) : 20,
+                      }}
+                    />
+                  ) : (
+                    <div
+                      className={`w-4 h-5 rounded-[2px] border border-dashed transition-all ${
+                        aspectRatio === ar.value
+                          ? "border-white/30"
+                          : "border-white/10"
+                      }`}
+                    />
+                  )}
+                </div>
+                {ar.name}
+              </button>
             ))}
           </div>
-          <button
-            onClick={() =>
-              setCorners(
-                BUILT_IN_BACKGROUNDS[activeBgIdx >= 0 ? activeBgIdx : 0]
-                  .corners,
-              )
-            }
-            className="mt-2 w-full text-[10px] py-1.5 rounded-lg bg-[#1e1e1e] hover:bg-[#252525] text-white/25 hover:text-white/50 transition-all"
-          >
-            Reset
-          </button>
         </div>
 
-        <div className="h-px bg-[#1e1e1e]" />
+        <div className="h-px bg-white/[0.06] mx-5" />
 
-        {/* Opacity — pill slider */}
-        <div className="flex items-center gap-2 h-10 rounded-full bg-[#222222] border border-white/[0.06] px-3 min-w-0">
-          <span className="text-[11px] text-white/40 flex-shrink-0">
-            Opacity
-          </span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            value={opacity}
-            onChange={(e) => setOpacity(parseFloat(e.target.value))}
-            className="min-w-0 w-full accent-white/50 h-px"
-          />
-          <span className="text-[11px] font-mono text-white/30 w-6 text-right flex-shrink-0">
-            {Math.round(opacity * 100)}
-          </span>
-        </div>
+        {/* Adjustments */}
+        <div className="px-5 pt-5 pb-4 space-y-2.5">
+          <p className="text-[11px] font-medium uppercase tracking-wider text-white/30 mb-2">
+            Adjustments
+          </p>
 
-        {/* Zoom — pill slider (hidden for video) */}
-        {contentType !== "video" && (
-          <div className="flex items-center gap-2 h-10 rounded-full bg-[#222222] border border-white/[0.06] px-3 min-w-0 overflow-hidden">
-            <span className="text-[11px] text-white/40 flex-shrink-0">
-              Zoom
+          {/* Opacity */}
+          <div className="flex items-center gap-2.5 h-9 rounded-lg bg-[#141414] px-3 min-w-0">
+            <span className="text-[10px] text-white/30 flex-shrink-0 w-12">
+              Opacity
             </span>
             <input
               type="range"
               min={0}
               max={1}
               step={0.01}
-              value={deviceZoom}
-              onChange={(e) => setDeviceZoom(parseFloat(e.target.value))}
-              className="min-w-0 w-full accent-white/50 h-px"
+              value={opacity}
+              onChange={(e) => setOpacity(parseFloat(e.target.value))}
+              className="min-w-0 w-full accent-white/40 h-px"
             />
-            <span className="text-[11px] font-mono text-white/30 w-6 text-right flex-shrink-0">
-              {Math.round(deviceZoom * 100)}
+            <span className="text-[10px] font-mono text-white/20 w-6 text-right flex-shrink-0">
+              {Math.round(opacity * 100)}
             </span>
           </div>
-        )}
 
-        {/* Toggles */}
-        <div className="space-y-2">
-          <button
-            onClick={() => setScreenRadius(!screenRadius)}
-            className="flex items-center gap-3 cursor-pointer select-none w-full py-2 px-2.5 rounded-lg hover:bg-[#1e1e1e] transition-all"
-          >
-            <div
-              className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 ${screenRadius ? "bg-[#3a3a3a]" : "bg-[#222222]"}`}
-            >
-              <div
-                className={`absolute top-0.5 w-4 h-4 rounded-full bg-white/90 shadow-sm transition-all ${screenRadius ? "left-[18px]" : "left-0.5"}`}
-              />
-            </div>
-            <span className="text-[11px] text-white/40">Rounded corners</span>
-          </button>
-          {/* <button
-            onClick={() => setShowNotch(!showNotch)}
-            className="flex items-center gap-3 cursor-pointer select-none w-full py-2 px-2.5 rounded-lg hover:bg-[#1e1e1e] transition-all"
-          >
-            <div
-              className={`w-9 h-5 rounded-full transition-colors relative flex-shrink-0 ${showNotch ? "bg-[#3a3a3a]" : "bg-[#222222]"}`}
-            >
-              <div
-                className={`absolute top-0.5 w-4 h-4 rounded-full bg-white/90 shadow-sm transition-all ${showNotch ? "left-[18px]" : "left-0.5"}`}
-              />
-            </div>
-            <span className="text-[11px] text-white/40">Dynamic Island</span>
-          </button> */}
-        </div>
-
-        {/* Background Color — hidden for fullScene mockups */}
-        {!(activeBgIdx >= 0 && BUILT_IN_BACKGROUNDS[activeBgIdx]?.fullScene) && <div>
-          <p className="text-[10px] uppercase tracking-widest text-white/25 mb-2">
-            Background
-          </p>
-          <div className="flex gap-1.5">
-            {BG_COLORS.map((c) => (
-              <button
-                key={c.name}
-                onClick={() => {
-                  setBgColor(c.value);
-                  setBgImageSrc(null);
-                }}
-                className={`w-8 h-8 rounded-lg border-2 transition-all ${
-                  bgColor === c.value && !bgImageSrc
-                    ? "border-white/40 scale-110"
-                    : "border-white/[0.08] hover:border-white/20"
-                }`}
-                title={c.name}
-              >
-                {c.value ? (
-                  <div
-                    className="w-full h-full rounded-[5px]"
-                    style={{ backgroundColor: c.value }}
-                  />
-                ) : (
-                  <div
-                    className="w-full h-full rounded-[5px] overflow-hidden"
-                    style={{
-                      backgroundImage:
-                        "repeating-conic-gradient(#444 0% 25%, #666 0% 50%)",
-                      backgroundSize: "8px 8px",
-                    }}
-                  />
-                )}
-              </button>
-            ))}
-          </div>
-          <div className="flex gap-1.5 mt-2 flex-wrap">
-            {BG_IMAGES.map((bg) => (
-              <button
-                key={bg.name}
-                onClick={() => {
-                  setBgImageSrc(bg.src);
-                  setBgColor(null);
-                }}
-                className={`w-8 h-8 rounded-lg border-2 overflow-hidden transition-all ${
-                  bgImageSrc === bg.src
-                    ? "border-white/40 scale-110"
-                    : "border-white/[0.08] hover:border-white/20"
-                }`}
-                title={bg.name}
-              >
-                <img
-                  src={bg.src}
-                  alt={bg.name}
-                  className="w-full h-full object-cover"
-                />
-              </button>
-            ))}
-          </div>
-          {bgImageSrc && (
-            <div className="flex items-center gap-2 h-10 rounded-full bg-[#222222] border border-white/[0.06] px-3 min-w-0 mt-2">
-              <span className="text-[11px] text-white/40 flex-shrink-0">
-                Darken
+          {/* Zoom */}
+          {contentType !== "video" && (
+            <div className="flex items-center gap-2.5 h-9 rounded-lg bg-[#141414] px-3 min-w-0">
+              <span className="text-[10px] text-white/30 flex-shrink-0 w-12">
+                Zoom
               </span>
               <input
                 type="range"
                 min={0}
                 max={1}
                 step={0.01}
-                value={bgOverlay}
-                onChange={(e) => setBgOverlay(parseFloat(e.target.value))}
-                className="min-w-0 w-full accent-white/50 h-px"
+                value={deviceZoom}
+                onChange={(e) => setDeviceZoom(parseFloat(e.target.value))}
+                className="min-w-0 w-full accent-white/40 h-px"
               />
-              <span className="text-[11px] font-mono text-white/30 w-6 text-right flex-shrink-0">
-                {Math.round(bgOverlay * 100)}
+              <span className="text-[10px] font-mono text-white/20 w-6 text-right flex-shrink-0">
+                {Math.round(deviceZoom * 100)}
               </span>
             </div>
           )}
-        </div>}
+
+          {/* Rounded corners toggle */}
+          <button
+            onClick={() => setScreenRadius(!screenRadius)}
+            className="flex items-center justify-between w-full py-1.5 px-0.5 group"
+          >
+            <span className="text-[10px] text-white/25 group-hover:text-white/40 transition-colors">
+              Rounded corners
+            </span>
+            <div
+              className={`w-8 h-[18px] rounded-full transition-colors relative flex-shrink-0 ${screenRadius ? "bg-white/20" : "bg-white/[0.06]"}`}
+            >
+              <div
+                className={`absolute top-[2px] w-[14px] h-[14px] rounded-full bg-white/80 shadow-sm transition-all ${screenRadius ? "left-[16px]" : "left-[2px]"}`}
+              />
+            </div>
+          </button>
+        </div>
+
+        <div className="h-px bg-white/[0.06] mx-5" />
+
+        {/* Background — hidden for fullScene mockups */}
+        {!(
+          activeBgIdx >= 0 && BUILT_IN_BACKGROUNDS[activeBgIdx]?.fullScene
+        ) && (
+          <div className="px-5 pt-5 pb-4">
+            <p className="text-[11px] font-medium uppercase tracking-wider text-white/30 mb-3">
+              Background
+            </p>
+            <div className="flex gap-2">
+              {BG_COLORS.map((c) => (
+                <button
+                  key={c.name}
+                  onClick={() => {
+                    setBgColor(c.value);
+                    setBgImageSrc(null);
+                  }}
+                  className={`w-9 h-9 rounded-lg border-2 transition-all ${
+                    bgColor === c.value && !bgImageSrc
+                      ? "border-white/40 scale-110"
+                      : "border-white/[0.08] hover:border-white/20"
+                  }`}
+                  title={c.name}
+                >
+                  {c.value ? (
+                    <div
+                      className="w-full h-full rounded-[5px]"
+                      style={{ backgroundColor: c.value }}
+                    />
+                  ) : (
+                    <div
+                      className="w-full h-full rounded-[5px] overflow-hidden"
+                      style={{
+                        backgroundImage:
+                          "repeating-conic-gradient(#444 0% 25%, #666 0% 50%)",
+                        backgroundSize: "8px 8px",
+                      }}
+                    />
+                  )}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-2.5 flex-wrap">
+              {BG_IMAGES.map((bg) => (
+                <button
+                  key={bg.name}
+                  onClick={() => {
+                    setBgImageSrc(bg.src);
+                    setBgColor(null);
+                  }}
+                  className={`w-9 h-9 rounded-lg border-2 overflow-hidden transition-all ${
+                    bgImageSrc === bg.src
+                      ? "border-white/40 scale-110"
+                      : "border-white/[0.08] hover:border-white/20"
+                  }`}
+                  title={bg.name}
+                >
+                  <img
+                    src={bg.src}
+                    alt={bg.name}
+                    className="w-full h-full object-cover"
+                  />
+                </button>
+              ))}
+            </div>
+            {bgImageSrc && (
+              <div className="flex items-center gap-2.5 h-9 rounded-lg bg-[#141414] px-3 min-w-0 mt-3">
+                <span className="text-[10px] text-white/30 flex-shrink-0">
+                  Darken
+                </span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={bgOverlay}
+                  onChange={(e) => setBgOverlay(parseFloat(e.target.value))}
+                  className="min-w-0 w-full accent-white/50 h-px"
+                />
+                <span className="text-[11px] font-mono text-white/30 w-6 text-right flex-shrink-0">
+                  {Math.round(bgOverlay * 100)}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex-1" />
+
+        {/* Points — collapsed */}
+        <div className="px-5 pb-4">
+          <details className="group">
+            <summary className="text-[10px] text-white/20 cursor-pointer hover:text-white/30 transition-colors list-none flex items-center gap-1">
+              <svg
+                className="w-3 h-3 transition-transform group-open:rotate-90"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 5l7 7-7 7"
+                />
+              </svg>
+              Corner points
+            </summary>
+            <div className="mt-2 space-y-0.5 px-1">
+              {corners.map((p, i) => (
+                <div key={i} className="flex items-center gap-1.5">
+                  <span className="w-1 h-1 rounded-full bg-white/15" />
+                  <span className="text-[10px] font-mono text-white/20">
+                    {Math.round(p.x)}, {Math.round(p.y)}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <button
+              onClick={() =>
+                setCorners(
+                  BUILT_IN_BACKGROUNDS[activeBgIdx >= 0 ? activeBgIdx : 0]
+                    .corners,
+                )
+              }
+              className="mt-1.5 w-full text-[10px] py-1 rounded-md bg-[#141414] hover:bg-[#1a1a1a] text-white/20 hover:text-white/35 transition-all"
+            >
+              Reset
+            </button>
+          </details>
+        </div>
 
         {/* Export */}
-        <button
-          onClick={contentType === "video" ? handleVideoExport : handleExport}
-          disabled={!bgImage || isExporting}
-          className="mt-auto py-2.5 rounded-xl bg-[#252525] hover:bg-[#2e2e2e] disabled:opacity-20 text-white/70 hover:text-white/90 text-xs font-medium transition-all border border-white/[0.06] hover:border-white/[0.12]"
-        >
-          {contentType === "video" ? "Export Video" : "Export PNG"}
-        </button>
+        <div className="px-4 pb-4">
+          <button
+            onClick={contentType === "video" ? handleVideoExport : handleExport}
+            disabled={!bgImage || isExporting}
+            className="w-full py-2.5 rounded-lg bg-white hover:bg-white/90 disabled:opacity-20 text-black text-[12px] font-semibold transition-all"
+          >
+            {contentType === "video" ? "Export Video" : "Export PNG"}
+          </button>
+        </div>
       </div>
 
-      {/* Right Panel — glassmorphism */}
-      <div className="hidden md:flex absolute top-4 right-4 bottom-4 w-52 flex-col gap-4 p-4 rounded-2xl bg-[#161616] border border-white/[0.08] shadow-2xl shadow-black/50 overflow-y-auto z-10">
-        <a
-          href="https://buymeacoffee.com/khushbuildsnow"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-medium transition-all hover:scale-[1.02]"
-          style={{ backgroundColor: "#FFDD00", color: "#000" }}
-        >
-          <img src="/bmc-logo.svg" alt="" className="h-4 w-4" />
-          Buy me a coffee
-        </a>
-
-        <a
-          href="https://buildnowstudios.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center justify-center gap-1 py-2 rounded-xl bg-white text-black text-[11px] font-bold transition-all hover:scale-[1.02]"
-        >
-          <img src="/logo.png" alt="" className="h-5 w-5 rounded-md" />
-          We build sick mobile apps
-        </a>
-
-        <div className="h-px bg-[#1e1e1e]" />
-
+      {/* Right Panel */}
+      <div className="hidden md:flex absolute top-0 right-0 bottom-0 w-56 flex-col bg-[#0f0f0f] border-l border-white/[0.06] overflow-y-auto z-10">
         {/* Device dropdown */}
-        <div className="relative">
+        <div className="relative px-5 pt-5 pb-4">
           <button
             onClick={() => setDeviceDropdownOpen(!deviceDropdownOpen)}
-            className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl bg-[#1e1e1e] hover:bg-[#252525] transition-all"
+            className="w-full flex items-center justify-between px-3 py-2 rounded-lg bg-[#141414] hover:bg-[#1a1a1a] transition-all"
           >
             <div className="flex items-center gap-2">
               {selectedDevice === "iPhone" ? (
@@ -1533,7 +1574,7 @@ export default function SickPreviews() {
         </div>
 
         {/* Mockup grid */}
-        <div className="grid grid-cols-1 gap-2">
+        <div className="px-5 pb-4 grid grid-cols-1 gap-2.5">
           {BUILT_IN_BACKGROUNDS.filter(
             (bg) => bg.device === selectedDevice,
           ).map((bg) => {
@@ -1542,49 +1583,53 @@ export default function SickPreviews() {
               <button
                 key={idx}
                 onClick={() => selectBuiltInBg(idx)}
-                className={`aspect-[3/4] rounded-xl overflow-hidden border-2 transition-all hover:scale-[1.03] ${
+                className={`aspect-[3/4] rounded-lg bg-black overflow-hidden border transition-all hover:scale-[1.02] ${
                   activeBgIdx === idx
-                    ? "border-white/30 shadow-lg shadow-white/5"
-                    : "border-white/[0.06] hover:border-white/15"
+                    ? "border-white/20 ring-1 ring-white/10"
+                    : "border-white/[0.04] hover:border-white/10"
                 }`}
               >
                 <img
                   src={bg.thumb}
                   alt={bg.name}
-                  className="w-full h-full object-cover bg-white"
+                  className="w-full h-full object-cover bg-black"
                 />
               </button>
             );
           })}
           {BUILT_IN_BACKGROUNDS.filter((bg) => bg.device === selectedDevice)
             .length === 0 && (
-            <div className="py-8 text-center text-xs text-white/20">
+            <div className="py-6 text-center text-[11px] text-white/15">
               Coming soon
             </div>
           )}
-        </div>
-        <label className="flex items-center justify-center gap-1.5 cursor-pointer py-2.5 rounded-xl bg-[#1e1e1e] hover:bg-[#252525] border border-dashed border-white/[0.08] hover:border-white/[0.15] text-white/25 hover:text-white/50 transition-all text-xs">
-          <svg
-            className="w-3.5 h-3.5"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M12 4v16m8-8H4"
+
+          {/* Custom upload */}
+          <label className="flex items-center justify-center gap-1.5 cursor-pointer py-2.5 rounded-lg bg-[#141414] hover:bg-[#1a1a1a] border border-dashed border-white/[0.04] hover:border-white/10 text-white/20 hover:text-white/40 transition-all text-[11px]">
+            <svg
+              className="w-3.5 h-3.5"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+            Custom
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={handleBgUpload}
+              className="hidden"
             />
-          </svg>
-          <span>Custom</span>
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp,video/mp4,video/quicktime,video/webm"
-            onChange={handleBgUpload}
-            className="hidden"
-          />
-        </label>
+          </label>
+        </div>
+
+        <div className="flex-1" />
       </div>
 
       {/* Mobile bottom bar */}
@@ -1623,7 +1668,7 @@ export default function SickPreviews() {
               <img
                 src={bg.thumb}
                 alt={bg.name}
-                className="w-full h-full object-cover bg-white"
+                className="w-full h-full object-cover bg-black"
               />
             </button>
           ))}
@@ -1655,9 +1700,32 @@ export default function SickPreviews() {
         </div>
       </div>
 
+      {/* Bottom center links */}
+      <div className="hidden md:flex fixed bottom-4 left-64 right-56 z-20 items-center justify-center gap-4">
+        {/* <a
+          href="https://buymeacoffee.com/khushbuildsnow"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 px-5 py-2.5 rounded-full text-sm font-semibold transition-all hover:scale-105 shadow-lg"
+          style={{ backgroundColor: "#FFDD00", color: "#000" }}
+        >
+          <img src="/bmc-logo.svg" alt="" className="h-4 w-4" />
+          Buy me a coffee
+        </a> */}
+        <a
+          href="https://buildnowstudios.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-white text-black text-sm font-bold transition-all hover:scale-105 shadow-lg"
+        >
+          <img src="/logo.png" alt="" className="h-5 w-5 rounded-sm" />
+          We build sick mobile apps
+        </a>
+      </div>
+
       {/* Quality toast */}
       {showToast && (
-        <div className="fixed bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 z-30 animate-slide-up">
+        <div className="fixed top-4 right-4 md:right-10 z-30 animate-slide-up">
           <div className="flex items-center gap-3 px-4 py-2.5 rounded-full bg-white shadow-xl shadow-black/20">
             <span className="text-xs font-semibold text-black/70">
               Preview is low quality export for full resolution
